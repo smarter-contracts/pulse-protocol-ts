@@ -1,0 +1,28 @@
+{
+  "name": "@pulse-protocol/ipfs",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --out-dir dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@ipld/dag-cbor": "^9.0.0",
+    "@pulse-protocol/types": "workspace:*",
+    "multiformats": "^13.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "vitest": "^2.0.0"
+  }
+}
