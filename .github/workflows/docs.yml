@@ -1,0 +1,54 @@
+name: Docs
+
+# Regenerates and deploys the TypeDoc API reference to GitHub Pages whenever
+# a new version tag is pushed (e.g. @pulse-protocol/crypto@0.2.0).
+
+on:
+  push:
+    tags:
+      - '@pulse-protocol/*@*'
+  # Allow manual dispatch in case a rebuild is needed without a new tag.
+  workflow_dispatch:
+
+jobs:
+  docs:
+    name: Build and deploy API docs
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages (TypeDoc needs compiled types)
+        run: pnpm build
+
+      - name: Generate API docs
+        run: pnpm docs
+
+      - name: Upload Pages artefact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/api
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

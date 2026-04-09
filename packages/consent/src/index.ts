@@ -4,11 +4,11 @@
  */
 export interface ConsentStore {
   /** Stores a consent record by CID. */
-  putConsent(cid: string, data: Uint8Array): Promise<void>
+  putConsent(cid: string, data: Uint8Array): Promise<void>;
   /** Retrieves a consent record by CID. */
-  getConsent(cid: string): Promise<Uint8Array | null>
+  getConsent(cid: string): Promise<Uint8Array | null>;
   /** Stores a revoke record by CID. */
-  putRevoke(cid: string, data: Uint8Array): Promise<void>
+  putRevoke(cid: string, data: Uint8Array): Promise<void>;
   /** Retrieves a revoke record by CID. */
-  getRevoke(cid: string): Promise<Uint8Array | null>
+  getRevoke(cid: string): Promise<Uint8Array | null>;
 }

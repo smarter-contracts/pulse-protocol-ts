@@ -14,7 +14,11 @@
     "build": "tsup src/index.ts --format esm --dts --out-dir dist",
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@ipld/dag-cbor": "^9.0.0",
