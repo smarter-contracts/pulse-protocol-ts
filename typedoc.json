@@ -1,0 +1,19 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "pulse-protocol-ts",
+  "entryPoints": [
+    "packages/types/src/index.ts",
+    "packages/crypto/src/index.ts",
+    "packages/ipfs/src/index.ts",
+    "packages/consent/src/index.ts"
+  ],
+  "entryPointStrategy": "resolve",
+  "out": "docs/api",
+  "readme": "README.md",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "excludeExternals": true,
+  "navigationLinks": {
+    "GitHub": "https://github.com/smarter-contracts/pulse-protocol-ts"
+  }
+}

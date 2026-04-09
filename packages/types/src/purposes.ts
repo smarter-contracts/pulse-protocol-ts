@@ -23,28 +23,28 @@ export enum PulsePurpose {
 export function purposeString(p: PulsePurpose): string {
   switch (p) {
     case PulsePurpose.SignTx:
-      return 'signtx'
+      return 'signtx';
     case PulsePurpose.EncryptConsentNotaryBlock:
-      return 'encrypt-consent-notary-block'
+      return 'encrypt-consent-notary-block';
     case PulsePurpose.EncryptConsentStructure:
-      return 'consent'
+      return 'consent';
     case PulsePurpose.EncryptRevokeNotaryBlock:
-      return 'encrypt-revoke-notary-block'
+      return 'encrypt-revoke-notary-block';
     case PulsePurpose.EncryptRevokeStructure:
-      return 'revoke'
+      return 'revoke';
     case PulsePurpose.PQDeriveConsent:
-      return 'pq-derive-consent'
+      return 'pq-derive-consent';
     case PulsePurpose.PQDeriveRevoke:
-      return 'pq-derive-revoke'
+      return 'pq-derive-revoke';
     case PulsePurpose.SymmetricConsent:
-      return 'consent'
+      return 'consent';
     case PulsePurpose.SymmetricRevoke:
-      return 'revoke'
+      return 'revoke';
     case PulsePurpose.SymmetricUpdate:
-      return 'update'
+      return 'update';
     case PulsePurpose.SymmetricKeyWrap:
-      return 'keywrap'
+      return 'keywrap';
     default:
-      return `unknown-${p}`
+      return `unknown-${p}`;
   }
 }

@@ -4,11 +4,11 @@
  */
 export interface PulsePQEncryptionKey {
   /** Keccak-256 fingerprint of the recipient's ML-KEM-768 public key (32 bytes) */
-  keyFingerPrint: Uint8Array
+  keyFingerPrint: Uint8Array;
   /** ML-KEM-768 encapsulated key (1088 bytes) */
-  encapsulatedKeyKey: Uint8Array
+  encapsulatedKeyKey: Uint8Array;
   /** AES-wrapped data key sealed for this recipient */
-  encapsulatedDataKey: Uint8Array
+  encapsulatedDataKey: Uint8Array;
 }
 
 /**
@@ -17,16 +17,16 @@ export interface PulsePQEncryptionKey {
  */
 export interface PulsePQEncryptionResult {
   /** Encrypted payload (AES-256-GCM ciphertext + tag) */
-  sealedData: Uint8Array
+  sealedData: Uint8Array;
   /** Per-recipient key material */
-  keys: PulsePQEncryptionKey[]
+  keys: PulsePQEncryptionKey[];
 }
 
 /**
  * PQ revoke structure — PQ encryption result plus a grant reference CID.
  */
 export interface RevokeStructurePQ {
-  sealedData: Uint8Array
-  keys: PulsePQEncryptionKey[]
-  grant: string
+  sealedData: Uint8Array;
+  keys: PulsePQEncryptionKey[];
+  grant: string;
 }
