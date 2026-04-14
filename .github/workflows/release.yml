@@ -25,7 +25,7 @@ jobs:
       id-token: write        # to request an OIDC token for npm trusted publishing
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Full history is required for Changesets to determine what has changed.
           fetch-depth: 0
