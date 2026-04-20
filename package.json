@@ -16,7 +16,7 @@
   "packageManager": "pnpm@10.32.1",
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
-    "@changesets/cli": "^2.30.0",
+    "@changesets/cli": "^2.31.0",
     "@types/node": "^22.0.0",
     "turbo": "^2.0.0",
     "typedoc": "^0.28.18",
