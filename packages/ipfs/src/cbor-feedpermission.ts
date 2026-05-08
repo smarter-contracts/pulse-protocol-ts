@@ -34,21 +34,21 @@ export function marshalFeedPermission(p: FeedPermissionPayload): Uint8Array {
  */
 export function unmarshalFeedPermission(block: Uint8Array): FeedPermissionPayload {
   const obj = decode(block) as Record<string, unknown>;
-  if (obj['t'] !== 'feed-permission') throw new Error(`Unexpected type: ${obj['t']}`);
-  if (obj['v'] !== 1) throw new Error(`Unexpected version: ${obj['v']}`);
+  if (obj.t !== 'feed-permission') throw new Error(`Unexpected type: ${obj.t}`);
+  if (obj.v !== 1) throw new Error(`Unexpected version: ${obj.v}`);
   return {
-    consentNo: obj['cn'] as number,
-    walletId: obj['wid'] as string,
-    grantorWebId: obj['gwid'] as string,
-    counterpartyDid: obj['cpd'] as string,
-    feedType: obj['ft'] as string,
-    podContainerPath: obj['pcp'] as string,
-    permissions: obj['pm'] as string[],
-    dataCategories: obj['dc'] as string[],
-    issuedAt: obj['iat'] as number,
-    expiresAt: obj['exp'] as number,
-    encryptedNotary: obj['en'] as Uint8Array,
-    notaryKey1: obj['nk1'] as Uint8Array,
-    notaryKey2: obj['nk2'] as Uint8Array,
+    consentNo: obj.cn as number,
+    walletId: obj.wid as string,
+    grantorWebId: obj.gwid as string,
+    counterpartyDid: obj.cpd as string,
+    feedType: obj.ft as string,
+    podContainerPath: obj.pcp as string,
+    permissions: obj.pm as string[],
+    dataCategories: obj.dc as string[],
+    issuedAt: obj.iat as number,
+    expiresAt: obj.exp as number,
+    encryptedNotary: obj.en as Uint8Array,
+    notaryKey1: obj.nk1 as Uint8Array,
+    notaryKey2: obj.nk2 as Uint8Array,
   };
 }

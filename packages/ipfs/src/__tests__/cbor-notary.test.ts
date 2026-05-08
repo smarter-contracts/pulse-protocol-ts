@@ -1,13 +1,22 @@
-import { describe, expect, it } from 'vitest';
-import { marshalNotaryBlock, unmarshalNotaryBlock } from '../cbor-notary.js';
-import { marshalFeedPermission } from '../cbor-feedpermission.js';
 import type { FeedPermissionPayload, NotaryBlock } from '@pulse-protocol/types';
+import { describe, expect, it } from 'vitest';
+import { marshalFeedPermission } from '../cbor-feedpermission.js';
+import { marshalNotaryBlock, unmarshalNotaryBlock } from '../cbor-notary.js';
 
 const feedSample: FeedPermissionPayload = {
-  consentNo: 1, walletId: 'w', grantorWebId: 'gw', counterpartyDid: 'cp',
-  feedType: 'ft', podContainerPath: 'pulse/feeds/ft/', permissions: [], dataCategories: [],
-  issuedAt: 0, expiresAt: 0, encryptedNotary: new Uint8Array(1),
-  notaryKey1: new Uint8Array(33), notaryKey2: new Uint8Array(33),
+  consentNo: 1,
+  walletId: 'w',
+  grantorWebId: 'gw',
+  counterpartyDid: 'cp',
+  feedType: 'ft',
+  podContainerPath: 'pulse/feeds/ft/',
+  permissions: [],
+  dataCategories: [],
+  issuedAt: 0,
+  expiresAt: 0,
+  encryptedNotary: new Uint8Array(1),
+  notaryKey1: new Uint8Array(33),
+  notaryKey2: new Uint8Array(33),
 };
 
 describe('NotaryBlock CBOR', () => {
@@ -28,7 +37,12 @@ describe('NotaryBlock CBOR', () => {
   });
 
   it('round-trips a NotaryBlock with empty optional fields', () => {
-    const sparse: NotaryBlock = { timestamp: 1_700_000_001, ipAddress: '', userAgent: '', location: '' };
+    const sparse: NotaryBlock = {
+      timestamp: 1_700_000_001,
+      ipAddress: '',
+      userAgent: '',
+      location: '',
+    };
     const block = marshalNotaryBlock(sparse);
     const got = unmarshalNotaryBlock(block);
     expect(got.timestamp).toBe(sparse.timestamp);

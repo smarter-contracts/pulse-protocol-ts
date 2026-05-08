@@ -26,9 +26,9 @@ export function unmarshalV1ConsentEc(block: Uint8Array): ConsentStructureV1 {
   const obj = decode(block) as Record<string, unknown>;
   if ('t' in obj) throw new Error('Block has a type discriminator; expected a V1 record');
   return {
-    consent: obj['consent'] as string,
-    key1: obj['key1'] as string,
-    key2: obj['key2'] as string,
+    consent: obj.consent as string,
+    key1: obj.key1 as string,
+    key2: obj.key2 as string,
   };
 }
 
@@ -48,10 +48,10 @@ export function unmarshalV1RevokeEc(block: Uint8Array): RevokeStructureV1 {
   const obj = decode(block) as Record<string, unknown>;
   if ('t' in obj) throw new Error('Block has a type discriminator; expected a V1 record');
   return {
-    revoke: obj['revoke'] as string,
-    key1: obj['key1'] as string,
-    key2: obj['key2'] as string,
-    grantRef: obj['grant_ref'] as string,
+    revoke: obj.revoke as string,
+    key1: obj.key1 as string,
+    key2: obj.key2 as string,
+    grantRef: obj.grant_ref as string,
   };
 }
 
@@ -75,8 +75,8 @@ export function unmarshalV1ConsentPq(block: Uint8Array): ConsentStructureMultiV1
   const obj = decode(block) as Record<string, unknown>;
   if ('t' in obj) throw new Error('Block has a type discriminator; expected a V1 record');
   return {
-    consent: obj['consent'] as string,
-    keys: obj['keys'] as string[],
+    consent: obj.consent as string,
+    keys: obj.keys as string[],
   };
 }
 
@@ -97,8 +97,8 @@ export function unmarshalV1RevokePq(block: Uint8Array): RevokeStructureMultiV1 {
   const obj = decode(block) as Record<string, unknown>;
   if ('t' in obj) throw new Error('Block has a type discriminator; expected a V1 record');
   return {
-    revoke: obj['revoke'] as string,
-    keys: obj['keys'] as string[],
-    grantRef: obj['grant_ref'] as string,
+    revoke: obj.revoke as string,
+    keys: obj.keys as string[],
+    grantRef: obj.grant_ref as string,
   };
 }

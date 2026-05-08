@@ -1,9 +1,5 @@
 import { decode, encode } from '@ipld/dag-cbor';
-import {
-  PulsePQEncryptionKey,
-  type PulsePQEncryptionResult,
-  type RevokeStructurePQ,
-} from '@pulse-protocol/types';
+import type { PulsePQEncryptionResult, RevokeStructurePQ } from '@pulse-protocol/types';
 
 /**
  * Encodes a V2 PQ consent record as DAG-CBOR.
@@ -28,15 +24,15 @@ export function marshalConsentPq(r: PulsePQEncryptionResult): Uint8Array {
  */
 export function unmarshalConsentPq(block: Uint8Array): PulsePQEncryptionResult {
   const obj = decode(block) as Record<string, unknown>;
-  if (obj['t'] !== 'pq') throw new Error(`Unexpected type: ${obj['t']}`);
-  if (obj['v'] !== 1) throw new Error(`Unexpected version: ${obj['v']}`);
-  const keys = (obj['keys'] as Array<Record<string, unknown>>).map((k) => ({
-    keyFingerPrint: k['fp'] as Uint8Array,
-    encapsulatedKeyKey: k['ekk'] as Uint8Array,
-    encapsulatedDataKey: k['edk'] as Uint8Array,
+  if (obj.t !== 'pq') throw new Error(`Unexpected type: ${obj.t}`);
+  if (obj.v !== 1) throw new Error(`Unexpected version: ${obj.v}`);
+  const keys = (obj.keys as Array<Record<string, unknown>>).map((k) => ({
+    keyFingerPrint: k.fp as Uint8Array,
+    encapsulatedKeyKey: k.ekk as Uint8Array,
+    encapsulatedDataKey: k.edk as Uint8Array,
   }));
   return {
-    sealedData: obj['sd'] as Uint8Array,
+    sealedData: obj.sd as Uint8Array,
     keys,
   };
 }
@@ -63,16 +59,16 @@ export function marshalRevokePq(r: RevokeStructurePQ): Uint8Array {
  */
 export function unmarshalRevokePq(block: Uint8Array): RevokeStructurePQ {
   const obj = decode(block) as Record<string, unknown>;
-  if (obj['t'] !== 'rev-pq') throw new Error(`Unexpected type: ${obj['t']}`);
-  if (obj['v'] !== 1) throw new Error(`Unexpected version: ${obj['v']}`);
-  const keys = (obj['keys'] as Array<Record<string, unknown>>).map((k) => ({
-    keyFingerPrint: k['fp'] as Uint8Array,
-    encapsulatedKeyKey: k['ekk'] as Uint8Array,
-    encapsulatedDataKey: k['edk'] as Uint8Array,
+  if (obj.t !== 'rev-pq') throw new Error(`Unexpected type: ${obj.t}`);
+  if (obj.v !== 1) throw new Error(`Unexpected version: ${obj.v}`);
+  const keys = (obj.keys as Array<Record<string, unknown>>).map((k) => ({
+    keyFingerPrint: k.fp as Uint8Array,
+    encapsulatedKeyKey: k.ekk as Uint8Array,
+    encapsulatedDataKey: k.edk as Uint8Array,
   }));
   return {
-    sealedData: obj['sd'] as Uint8Array,
+    sealedData: obj.sd as Uint8Array,
     keys,
-    grant: obj['gr'] as string,
+    grant: obj.gr as string,
   };
 }

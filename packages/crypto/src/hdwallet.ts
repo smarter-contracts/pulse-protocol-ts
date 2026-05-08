@@ -1,4 +1,3 @@
-import { secp256k1 } from '@noble/curves/secp256k1';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem';
 import type { PulsePurpose } from '@pulse-protocol/types';
 import { HDKey } from '@scure/bip32';
