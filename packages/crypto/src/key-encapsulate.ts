@@ -1,4 +1,3 @@
-import { randomBytes } from '@noble/hashes/utils';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem';
 import {
   type PulsePQEncryptionKey,

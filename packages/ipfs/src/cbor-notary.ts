@@ -25,12 +25,12 @@ export function marshalNotaryBlock(n: NotaryBlock): Uint8Array {
  */
 export function unmarshalNotaryBlock(block: Uint8Array): NotaryBlock {
   const obj = decode(block) as Record<string, unknown>;
-  if (obj['t'] !== 'notary') throw new Error(`Unexpected type: ${obj['t']}`);
-  if (obj['v'] !== 1) throw new Error(`Unexpected version: ${obj['v']}`);
+  if (obj.t !== 'notary') throw new Error(`Unexpected type: ${obj.t}`);
+  if (obj.v !== 1) throw new Error(`Unexpected version: ${obj.v}`);
   return {
-    timestamp: obj['ts'] as number,
-    ipAddress: obj['ip'] as string,
-    userAgent: obj['ua'] as string,
-    location: obj['loc'] as string,
+    timestamp: obj.ts as number,
+    ipAddress: obj.ip as string,
+    userAgent: obj.ua as string,
+    location: obj.loc as string,
   };
 }

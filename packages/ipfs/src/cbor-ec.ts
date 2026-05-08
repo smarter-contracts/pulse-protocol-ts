@@ -24,12 +24,12 @@ export function marshalConsentEc(r: PulseECEncryptionResult): Uint8Array {
  */
 export function unmarshalConsentEc(block: Uint8Array): PulseECEncryptionResult {
   const obj = decode(block) as Record<string, unknown>;
-  if (obj['t'] !== 'ec') throw new Error(`Unexpected type: ${obj['t']}`);
-  if (obj['v'] !== 1) throw new Error(`Unexpected version: ${obj['v']}`);
+  if (obj.t !== 'ec') throw new Error(`Unexpected type: ${obj.t}`);
+  if (obj.v !== 1) throw new Error(`Unexpected version: ${obj.v}`);
   return {
-    sealedData: obj['sd'] as Uint8Array,
-    key1: obj['k1'] as Uint8Array,
-    key2: obj['k2'] as Uint8Array,
+    sealedData: obj.sd as Uint8Array,
+    key1: obj.k1 as Uint8Array,
+    key2: obj.k2 as Uint8Array,
   };
 }
 
@@ -54,12 +54,12 @@ export function marshalRevokeEc(r: RevokeStructureEC): Uint8Array {
  */
 export function unmarshalRevokeEc(block: Uint8Array): RevokeStructureEC {
   const obj = decode(block) as Record<string, unknown>;
-  if (obj['t'] !== 'rev-ec') throw new Error(`Unexpected type: ${obj['t']}`);
-  if (obj['v'] !== 1) throw new Error(`Unexpected version: ${obj['v']}`);
+  if (obj.t !== 'rev-ec') throw new Error(`Unexpected type: ${obj.t}`);
+  if (obj.v !== 1) throw new Error(`Unexpected version: ${obj.v}`);
   return {
-    sealedData: obj['sd'] as Uint8Array,
-    key1: obj['k1'] as Uint8Array,
-    key2: obj['k2'] as Uint8Array,
-    grant: obj['gr'] as string,
+    sealedData: obj.sd as Uint8Array,
+    key1: obj.k1 as Uint8Array,
+    key2: obj.k2 as Uint8Array,
+    grant: obj.gr as string,
   };
 }

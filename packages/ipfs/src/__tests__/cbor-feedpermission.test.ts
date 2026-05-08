@@ -1,7 +1,7 @@
+import type { FeedPermissionPayload, NotaryBlock } from '@pulse-protocol/types';
 import { describe, expect, it } from 'vitest';
 import { marshalFeedPermission, unmarshalFeedPermission } from '../cbor-feedpermission.js';
 import { marshalNotaryBlock } from '../cbor-notary.js';
-import type { FeedPermissionPayload, NotaryBlock } from '@pulse-protocol/types';
 
 const nk1 = new Uint8Array(33);
 nk1[0] = 0x02;
@@ -52,7 +52,12 @@ describe('FeedPermissionPayload CBOR', () => {
   });
 
   it('round-trips with empty permission and category lists', () => {
-    const sparse: FeedPermissionPayload = { ...sample, permissions: [], dataCategories: [], expiresAt: 0 };
+    const sparse: FeedPermissionPayload = {
+      ...sample,
+      permissions: [],
+      dataCategories: [],
+      expiresAt: 0,
+    };
     const block = marshalFeedPermission(sparse);
     const got = unmarshalFeedPermission(block);
     expect(got.expiresAt).toBe(0);
