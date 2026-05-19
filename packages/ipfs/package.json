@@ -21,7 +21,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@ipld/dag-cbor": "^9.0.0",
+    "@ipld/dag-cbor": "^9.2.7",
     "@pulse-protocol/types": "workspace:*",
     "multiformats": "^13.0.0"
   },

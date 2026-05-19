@@ -77,8 +77,8 @@ importers:
   packages/ipfs:
     dependencies:
       '@ipld/dag-cbor':
-        specifier: ^9.0.0
-        version: 9.2.6
+        specifier: ^9.2.7
+        version: 9.2.7
       '@pulse-protocol/types':
         specifier: workspace:*
         version: link:../types
@@ -526,9 +526,8 @@ packages:
       '@types/node':
         optional: true
 
-  '@ipld/dag-cbor@9.2.6':
-    resolution: {integrity: sha512-vZGJ84Em2jCVAS7td5gc08YTVN8/s4bTQxg4pU77PAXDAR/yLYOthOvkCu01fdl1lrZwz47RdUterxdkrs3p5A==}
-    engines: {node: '>=16.0.0', npm: '>=7.0.0'}
+  '@ipld/dag-cbor@9.2.7':
+    resolution: {integrity: sha512-ZmfXmElRWATr+hoUTSAOr6HUcjVhOcNHDqgczc76qte2DHHFEK0ZhNzUcdTDQhF/VSIvf2ioaRTRLWwLc83sNw==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -869,8 +868,8 @@ packages:
     resolution: {integrity: sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ==}
     engines: {node: '>=8'}
 
-  cborg@5.1.0:
-    resolution: {integrity: sha512-OwailRORD5pIyxaLKKVdGHQ2OXWmYW7YsjDXnl64cIwWdQiyXRffVFsL34JR5c+BEeeSOHADM3cy/QNERH1SUw==}
+  cborg@5.1.1:
+    resolution: {integrity: sha512-BDbSRIp6XrQXkTc7g+DN0RB9RrDPTUfals2ecWUlt3juPLjbAvy/V72mJcXY0Ehu0Dq/3WpNCOCT68HUTbW+lw==}
     hasBin: true
 
   chai@5.3.3:
@@ -1838,9 +1837,9 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.19.19
 
-  '@ipld/dag-cbor@9.2.6':
+  '@ipld/dag-cbor@9.2.7':
     dependencies:
-      cborg: 5.1.0
+      cborg: 5.1.1
       multiformats: 13.4.2
 
   '@jridgewell/gen-mapping@0.3.13':
@@ -2113,7 +2112,7 @@ snapshots:
 
   cac@6.7.14: {}
 
-  cborg@5.1.0: {}
+  cborg@5.1.1: {}
 
   chai@5.3.3:
     dependencies:
