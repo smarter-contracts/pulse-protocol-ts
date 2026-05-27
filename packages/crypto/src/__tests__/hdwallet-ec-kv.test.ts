@@ -304,5 +304,141 @@ describe('HD Wallet — EC known values (mirrors pulse-protocol-go/crypto/hdwall
       const cid = await getCid(cbor);
       expect(cid).toBe('bafyreiabnu633o7opc26xejbewl22zsuhao4kjoeuayzhfep3h2nzfir6i');
     });
+
+    it('revoke CID, signature and address match known values', async () => {
+      const { getCid, marshalConsentEc, marshalRevokeEc } = await import('@pulse-protocol/ipfs');
+      const { encryptEcdh } = await import('../key-exchange.js');
+      const { signRevoke, getRevokeAddress } = await import('../signing.js');
+      const { secp256k1 } = await import('@noble/curves/secp256k1');
+
+      const alice = masterKeyFromSeed(aliceSeed);
+      const bob = masterKeyFromSeed(bobSeed);
+      const notaryPub = secp256k1.getPublicKey(notarySeed, true);
+
+      // ── Reproduce consent CID (GrantRef for the revoke) ────────────────────
+      const aliceNotaryNode = deriveNode(
+        alice,
+        otherParty,
+        chainId,
+        consentNumber,
+        PulsePurpose.EncryptConsentNotaryBlock,
+      );
+      const notaryResult = encryptEcdh(
+        new TextEncoder().encode('notary block payload for kv test'),
+        contractAddress,
+        aliceNotaryNode.privateKey!,
+        notaryPub,
+        PulsePurpose.EncryptConsentNotaryBlock,
+        chainId,
+        consentNumber,
+      );
+      const notaryCbor = marshalConsentEc(notaryResult);
+      const consentPlaintext = new Uint8Array([
+        ...notaryCbor,
+        ...new TextEncoder().encode('|consent payload for kv test'),
+      ]);
+      const aliceConsentNode = deriveNode(
+        alice,
+        otherParty,
+        chainId,
+        consentNumber,
+        PulsePurpose.EncryptConsentStructure,
+      );
+      const bobConsentNode = deriveNode(
+        bob,
+        otherParty,
+        chainId,
+        consentNumber,
+        PulsePurpose.EncryptConsentStructure,
+      );
+      const consentResult = encryptEcdh(
+        consentPlaintext,
+        contractAddress,
+        aliceConsentNode.privateKey!,
+        bobConsentNode.publicKey!,
+        PulsePurpose.EncryptConsentStructure,
+        chainId,
+        consentNumber,
+      );
+      const consentCid = await getCid(marshalConsentEc(consentResult));
+
+      // ── Step 8: Alice encrypts revoke notary (purpose 4) ───────────────────
+      const aliceRevokeNotaryNode = deriveNode(
+        alice,
+        otherParty,
+        chainId,
+        consentNumber,
+        PulsePurpose.EncryptRevokeNotaryBlock,
+      );
+      const revokeNotaryResult = encryptEcdh(
+        new TextEncoder().encode('revoke notary block payload for kv test'),
+        contractAddress,
+        aliceRevokeNotaryNode.privateKey!,
+        notaryPub,
+        PulsePurpose.EncryptRevokeNotaryBlock,
+        chainId,
+        consentNumber,
+      );
+
+      // ── Step 9: Alice encrypts revoke (purpose 5) ──────────────────────────
+      // Revoke notary block is serialised as a plain EC blob (no GrantRef).
+      const revokeNotaryCbor = marshalConsentEc(revokeNotaryResult);
+      const revokePlaintext = new Uint8Array([
+        ...revokeNotaryCbor,
+        ...new TextEncoder().encode('|revoke payload for kv test'),
+      ]);
+
+      const aliceRevokeNode = deriveNode(
+        alice,
+        otherParty,
+        chainId,
+        consentNumber,
+        PulsePurpose.EncryptRevokeStructure,
+      );
+      const bobRevokeNode = deriveNode(
+        bob,
+        otherParty,
+        chainId,
+        consentNumber,
+        PulsePurpose.EncryptRevokeStructure,
+      );
+      const revokeResult = encryptEcdh(
+        revokePlaintext,
+        contractAddress,
+        aliceRevokeNode.privateKey!,
+        bobRevokeNode.publicKey!,
+        PulsePurpose.EncryptRevokeStructure,
+        chainId,
+        consentNumber,
+      );
+
+      // Revoke CID must be computed from the full RevokeStructure (including
+      // the GrantRef / consentCid) so it matches what the mid-tier verifies.
+      const revokeCbor = marshalRevokeEc({ ...revokeResult, grant: consentCid });
+      const revokeCid = await getCid(revokeCbor);
+      expect(revokeCid).toBe('bafyreidjuyvb2sa5hy6guoow2cxiy6w7s52jtegwmetmc3d755vf4kgwgy');
+
+      // Sanity: marshalConsentEc (no GrantRef) produces a different CID,
+      // confirming that the GrantRef is what distinguishes the signed message.
+      const wrongCbor = marshalConsentEc(revokeResult);
+      const wrongCid = await getCid(wrongCbor);
+      expect(wrongCid).not.toBe(revokeCid);
+
+      // Alice signs the revoke using her SignTx key (purpose 1)
+      const aliceSignNode = deriveNode(
+        alice,
+        otherParty,
+        chainId,
+        consentNumber,
+        PulsePurpose.SignTx,
+      );
+      const sig = signRevoke(aliceSignNode.privateKey!, contractAddress, consentCid, revokeCid);
+      expect(toHex(sig)).toBe(
+        '1a5f0dfc10d7e40c45f39efbc2792664ca405ffca248dbc25896abfaeaa1cb1d7ec0f71d19484118d9f7343729c75338915823072b948c4b1a40f0c940e9ffdd1c',
+      );
+
+      const addr = getRevokeAddress(sig, contractAddress, consentCid, revokeCid);
+      expect(toHex(addr)).toBe('1147b934b5c0fcabbaed2cf128a3db1eb71ef2c0');
+    });
   });
 });
