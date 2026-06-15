@@ -1,7 +1,12 @@
 import { decode, encode } from '@ipld/dag-cbor';
 import type { PulseConsentPayload, PulseRevokePayload } from '@pulse-protocol/types';
 import { marshalConsentEc, unmarshalConsentEc } from './cbor-ec.js';
-import { marshalConsentPq, unmarshalConsentPq, marshalRevokePq, unmarshalRevokePq } from './cbor-pq.js';
+import {
+  marshalConsentPq,
+  marshalRevokePq,
+  unmarshalConsentPq,
+  unmarshalRevokePq,
+} from './cbor-pq.js';
 
 /**
  * Encodes a PulseConsentPayload to its V2 DAG-CBOR representation.
@@ -33,7 +38,9 @@ export function unmarshalConsent(block: Uint8Array): PulseConsentPayload {
     const pq = unmarshalConsentPq(block);
     return { sealedData: pq.sealedData, keys: pq.keys };
   }
-  throw new Error(`Block does not match any known V2 consent structure: unexpected type "${obj.t}"`);
+  throw new Error(
+    `Block does not match any known V2 consent structure: unexpected type "${obj.t}"`,
+  );
 }
 
 /**

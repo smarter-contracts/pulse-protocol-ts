@@ -367,8 +367,20 @@ describe('HD Wallet — NIST ML-KEM-768 known values', () => {
       const alice = masterKeyFromSeed(aliceSeed);
       const bob = masterKeyFromSeed(bobSeed);
 
-      const aliceKem = derivePqKeyPair(alice, otherParty, consentNumber, chainId, PulsePurpose.PQDeriveRevoke);
-      const bobKem = derivePqKeyPair(bob, otherParty, consentNumber, chainId, PulsePurpose.PQDeriveRevoke);
+      const aliceKem = derivePqKeyPair(
+        alice,
+        otherParty,
+        consentNumber,
+        chainId,
+        PulsePurpose.PQDeriveRevoke,
+      );
+      const bobKem = derivePqKeyPair(
+        bob,
+        otherParty,
+        consentNumber,
+        chainId,
+        PulsePurpose.PQDeriveRevoke,
+      );
 
       const pqResult = encryptPq(
         new TextEncoder().encode('revoke payload for PQ signing test'),
@@ -391,8 +403,19 @@ describe('HD Wallet — NIST ML-KEM-768 known values', () => {
       expect(correctRevokeCid).not.toBe(wrongRevokeCid);
 
       // Alice signs over the correct CID using her deterministic secp256k1 key (purpose 1)
-      const aliceSignNode = deriveNode(alice, otherParty, chainId, consentNumber, PulsePurpose.SignTx);
-      const sig = signRevoke(aliceSignNode.privateKey!, contractAddress, fakeConsentCid, correctRevokeCid);
+      const aliceSignNode = deriveNode(
+        alice,
+        otherParty,
+        chainId,
+        consentNumber,
+        PulsePurpose.SignTx,
+      );
+      const sig = signRevoke(
+        aliceSignNode.privateKey!,
+        contractAddress,
+        fakeConsentCid,
+        correctRevokeCid,
+      );
 
       // Address recovery against the correct CID must equal Alice's known signing address
       const recovered = getRevokeAddress(sig, contractAddress, fakeConsentCid, correctRevokeCid);
