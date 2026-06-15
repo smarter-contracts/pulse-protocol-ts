@@ -9,8 +9,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import {
+  marshalConsentEc,
+  marshalRevokeEc,
+  unmarshalConsentEc,
+  unmarshalRevokeEc,
+} from '../cbor-ec.js';
 import { getCid } from '../cid.js';
-import { marshalConsentEc, marshalRevokeEc, unmarshalConsentEc, unmarshalRevokeEc } from '../cbor-ec.js';
 
 // Fixed canary inputs — small deterministic byte arrays for stable CID pinning.
 const sd = new Uint8Array([0x01, 0x02, 0x03, 0x04]);

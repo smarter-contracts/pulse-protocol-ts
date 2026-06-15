@@ -8,8 +8,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import {
+  marshalConsentPq,
+  marshalRevokePq,
+  unmarshalConsentPq,
+  unmarshalRevokePq,
+} from '../cbor-pq.js';
 import { getCid } from '../cid.js';
-import { marshalConsentPq, marshalRevokePq, unmarshalConsentPq, unmarshalRevokePq } from '../cbor-pq.js';
 
 // Fixed canary inputs.
 const sd = new Uint8Array([0x01, 0x02, 0x03, 0x04]);
