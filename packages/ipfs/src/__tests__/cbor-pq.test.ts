@@ -37,8 +37,8 @@ describe('V2 PQ CBOR — marshalConsentPq / marshalRevokePq', () => {
     const decoded = unmarshalConsentPq(block);
     expect(decoded.sealedData).toEqual(sd);
     expect(decoded.keys).toHaveLength(2);
-    expect(decoded.keys[0].keyFingerPrint).toEqual(fp1);
-    expect(decoded.keys[1].keyFingerPrint).toEqual(fp2);
+    expect(decoded.keys[0]!.keyFingerPrint).toEqual(fp1);
+    expect(decoded.keys[1]!.keyFingerPrint).toEqual(fp2);
   });
 
   it('marshalRevokePq round-trips through unmarshalRevokePq', () => {
