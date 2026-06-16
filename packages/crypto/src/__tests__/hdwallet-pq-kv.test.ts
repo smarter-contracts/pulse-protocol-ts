@@ -353,4 +353,79 @@ describe('HD Wallet — NIST ML-KEM-768 known values', () => {
       expect(decryptedBob).toEqual(plaintext);
     });
   });
+
+  describe('PQ revoke signing (functional — CID non-deterministic due to ML-KEM randomness)', () => {
+    it('revoke signature verifies against Alice signing address; wrong CID recovers different address', async () => {
+      const { getCid, marshalConsentPq, marshalRevokePq } = await import('@pulse-protocol/ipfs');
+      const { encryptPq } = await import('../key-encapsulate.js');
+      const { signRevoke, getRevokeAddress } = await import('../signing.js');
+
+      // Use the consent CID from the EC KV test as a fixed GrantRef, matching
+      // how the mid-tier uses the original consent CID in the revoke structure.
+      const fakeConsentCid = 'bafyreiabnu633o7opc26xejbewl22zsuhao4kjoeuayzhfep3h2nzfir6i';
+
+      const alice = masterKeyFromSeed(aliceSeed);
+      const bob = masterKeyFromSeed(bobSeed);
+
+      const aliceKem = derivePqKeyPair(
+        alice,
+        otherParty,
+        consentNumber,
+        chainId,
+        PulsePurpose.PQDeriveRevoke,
+      );
+      const bobKem = derivePqKeyPair(
+        bob,
+        otherParty,
+        consentNumber,
+        chainId,
+        PulsePurpose.PQDeriveRevoke,
+      );
+
+      const pqResult = encryptPq(
+        new TextEncoder().encode('revoke payload for PQ signing test'),
+        contractAddress,
+        [aliceKem.publicKey, bobKem.publicKey],
+        PulsePurpose.PQDeriveRevoke,
+        chainId,
+        consentNumber,
+      );
+
+      // Correct CID: marshalRevokePq includes the GrantRef
+      const correctCbor = marshalRevokePq({ ...pqResult, grant: fakeConsentCid });
+      const correctRevokeCid = await getCid(correctCbor);
+
+      // Wrong CID: marshalConsentPq omits the GrantRef (the pre-fix bug)
+      const wrongCbor = marshalConsentPq(pqResult);
+      const wrongRevokeCid = await getCid(wrongCbor);
+
+      // Sanity: GrantRef must change the CBOR and therefore the CID
+      expect(correctRevokeCid).not.toBe(wrongRevokeCid);
+
+      // Alice signs over the correct CID using her deterministic secp256k1 key (purpose 1)
+      const aliceSignNode = deriveNode(
+        alice,
+        otherParty,
+        chainId,
+        consentNumber,
+        PulsePurpose.SignTx,
+      );
+      const sig = signRevoke(
+        aliceSignNode.privateKey!,
+        contractAddress,
+        fakeConsentCid,
+        correctRevokeCid,
+      );
+
+      // Address recovery against the correct CID must equal Alice's known signing address
+      const recovered = getRevokeAddress(sig, contractAddress, fakeConsentCid, correctRevokeCid);
+      expect(toHex(recovered)).toBe('1147b934b5c0fcabbaed2cf128a3db1eb71ef2c0');
+
+      // Recovery against the wrong CID must NOT equal Alice's address — demonstrating
+      // why a mid-tier that uses marshalRevoke (correct) rejects signatures made with
+      // the wrong CID.
+      const recoveredWrong = getRevokeAddress(sig, contractAddress, fakeConsentCid, wrongRevokeCid);
+      expect(toHex(recoveredWrong)).not.toBe('1147b934b5c0fcabbaed2cf128a3db1eb71ef2c0');
+    });
+  });
 });
