@@ -1,5 +1,20 @@
 # Changelog — @pulse-protocol/crypto
 
+## 0.1.1
+
+### Patch Changes
+
+- 9552264: Add dual ESM+CJS output to `crypto` and `types` packages
+
+  Both packages now publish a CommonJS bundle (`.cjs`) alongside the existing ES module output, and expose it via the `require` condition in `exports`. The `main` field points to the CJS bundle for legacy consumers.
+
+  No API changes — the published functions and types are identical.
+
+- Updated dependencies [9552264]
+- Updated dependencies [c2ce626]
+- Updated dependencies [9552264]
+  - @pulse-protocol/types@0.2.0
+
 ## [0.1.0] - 2026-04-09
 
 ### Added
