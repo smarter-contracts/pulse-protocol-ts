@@ -1,4 +1,4 @@
-import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import type { PulsePurpose } from '@pulse-protocol/types';
 import { HDKey } from '@scure/bip32';
 import { contextHash } from './context.js';
