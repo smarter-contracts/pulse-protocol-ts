@@ -49,7 +49,7 @@ const ARGON = { m: 256, t: 1, p: 1 };
 // ── Known values (identical to keyslot_kv_test.go) ────────────────────────────
 const PASSWORD_SLOT_KEY_HEX = 'e0a526a8299e7df426fabbeccbe3fa17ef482aba7f3fc0a231ff5a6f8d9b0247';
 const V2_BLOB_HEX =
-  'b00201001900112233445566778899aabbccddeeff000001000000000101a0a1a2a3a4a5a6a7a8a9aaab65bf91c7fa0f86398a4e61909ea42e20478f3a1a086e3d1636c53868700f30665c239f1fc76c3d75b6ea91a55820bca0';
+  'b00201001900112233445566778899aabbccddeeff000001000000000101a0a1a2a3a4a5a6a7a8a9aaab65bf91c7fa0f86398a4e61909ea42e20478f3a1a086e3d1636c53868700f3066d6e13b232939eae73e3fdc6da30d4d7c';
 const LEGACY_SLOT_KEY_HEX = 'ddb43fa7829150cb319f0a7bc489ae4885febf2b0ee370481744d98af8e6d439';
 const LEGACY_BLOB_HEX =
   '00112233445566778899aabbccddeeffa0a1a2a3a4a5a6a7a8a9aaab5562f8f2f2578021a58374164a0109078064d8ea858cd0aa1753ac8dfae81af944764bda3015c8c646c56f8c3d3d853e';
@@ -62,9 +62,7 @@ describe('Keyslot — known values (mirrors pulse-protocol-go/crypto/keyslot_kv_
 
   it('full v2 blob is byte-identical to the Go reference', () => {
     const slotKey = deriveSlotKeyPassword(SUB, ISS, WALLET_ID, SECRET, SALT, ARGON);
-    const ct = wrapKw(KW, slotKey, NONCE);
-    expect(ct.length).toBe(48);
-    const blob = encodeV2PasswordSlot(SLOT_TYPE_PASSWORD, SALT, NONCE, ct, ARGON);
+    const blob = encodeV2PasswordSlot(SLOT_TYPE_PASSWORD, KW, slotKey, SALT, NONCE, ARGON);
     expect(toHex(blob)).toBe(V2_BLOB_HEX);
   });
 
