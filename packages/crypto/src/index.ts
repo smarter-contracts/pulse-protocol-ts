@@ -4,5 +4,6 @@ export * from './hdwallet.js';
 export * from './hkdf.js';
 export * from './key-encapsulate.js';
 export * from './key-exchange.js';
+export * from './keyslot.js';
 export * from './signing.js';
 export * from './symmetric.js';
