@@ -186,30 +186,60 @@ export function deriveMethodKeyLegacy(
 // ─── v2 blob encode / decode ────────────────────────────────────────────────
 
 /**
- * Assemble a v2 password/argon2 keyslot blob from its parts. `ct` is the 48-byte
- * wrapped Kw (as returned by wrapKw).
+ * Assemble the header portion of a v2 password/argon2 keyslot blob — everything
+ * before the nonce:
+ *
+ *     [magic 0xB0][version 0x02][slotType][paramLen 2B BE][params]
+ *
+ * This header is used verbatim as the AES-GCM additional authenticated data, so
+ * the same byte sequence is reproduced by both the encoder and the reader (which
+ * slices it back out of the stored blob).
  */
-export function encodeV2PasswordSlot(
+function buildV2PasswordHeader(
   slotType: number,
   salt: Uint8Array,
-  nonce: Uint8Array,
-  ct: Uint8Array,
   params: ArgonParams,
 ): Uint8Array {
   const paramBlock = new Uint8Array(PASSWORD_PARAM_LEN);
   paramBlock.set(salt.subarray(0, SALT_SIZE), 0);
-  const view = new DataView(paramBlock.buffer, paramBlock.byteOffset, paramBlock.byteLength);
-  view.setUint32(SALT_SIZE, params.m, false); // big-endian
-  view.setUint32(SALT_SIZE + 4, params.t, false);
+  const paramView = new DataView(paramBlock.buffer, paramBlock.byteOffset, paramBlock.byteLength);
+  paramView.setUint32(SALT_SIZE, params.m, false); // big-endian
+  paramView.setUint32(SALT_SIZE + 4, params.t, false);
   paramBlock[SALT_SIZE + 8] = params.p & 0xff;
 
-  const header = new Uint8Array(5);
-  header[0] = KEYSLOT_MAGIC;
-  header[1] = KEYSLOT_VERSION;
-  header[2] = slotType & 0xff;
-  new DataView(header.buffer).setUint16(3, paramBlock.length, false);
+  const prefix = new Uint8Array(5);
+  prefix[0] = KEYSLOT_MAGIC;
+  prefix[1] = KEYSLOT_VERSION;
+  prefix[2] = slotType & 0xff;
+  new DataView(prefix.buffer).setUint16(3, paramBlock.length, false);
 
-  return concatBytes(header, paramBlock, nonce, ct);
+  return concatBytes(prefix, paramBlock);
+}
+
+/**
+ * Seal Kw under slotKey and assemble a full v2 password/argon2 keyslot blob. The
+ * header (magic..params) is bound into the ciphertext as AES-GCM additional
+ * authenticated data, so slotType, params and salt cannot be swapped without
+ * invalidating the authentication tag. Legacy blobs use no AAD and are
+ * unaffected.
+ */
+export function encodeV2PasswordSlot(
+  slotType: number,
+  kw: Uint8Array,
+  slotKey: Uint8Array,
+  salt: Uint8Array,
+  nonce: Uint8Array,
+  params: ArgonParams,
+): Uint8Array {
+  if (kw.length !== KW_SIZE) {
+    throw new Error(`Kw must be ${KW_SIZE} bytes, got ${kw.length}`);
+  }
+  if (nonce.length !== NONCE_SIZE) {
+    throw new Error(`nonce must be ${NONCE_SIZE} bytes, got ${nonce.length}`);
+  }
+  const header = buildV2PasswordHeader(slotType, salt, params);
+  const ct = gcm(slotKey, nonce, header).encrypt(kw);
+  return concatBytes(header, nonce, ct);
 }
 
 /**
@@ -263,24 +293,56 @@ function decodePasswordParams(params: Uint8Array): { salt: Uint8Array; argon: Ar
 /**
  * Recover Kw from a keyslot blob, dispatching on the encoding.
  *
- * A blob whose first byte is 0xB0 and that parses as a valid v2 header is
- * unwrapped via the v2 path (dispatched by slot type); anything else is treated
- * as a legacy blob. The caller supplies whichever unlock method(s) it holds.
+ * A blob whose first byte is 0xB0 is *attempted* as v2 first. Crucially, if the
+ * v2 attempt fails for ANY reason — wrong version, inconsistent paramLen, a
+ * failed authentication tag, or simply that no v2 unlock method was supplied —
+ * the reader falls back to attempting the legacy decode. This is required for
+ * correctness: a genuine legacy blob whose random salt happens to start with
+ * 0xB0 (roughly 1 in 256) would otherwise be misread as a malformed v2 blob and
+ * become undecryptable. An error is surfaced only when BOTH the v2 and legacy
+ * attempts fail.
  */
 export function unwrapKeyslot(
   blob: Uint8Array,
   methods: { password?: PasswordUnlock; legacy?: LegacyUnlock },
 ): Uint8Array {
+  let v2Error: unknown;
   if (blob.length > 0 && blob[0] === KEYSLOT_MAGIC) {
-    const decoded = decodeV2Slot(blob); // throws if magic matched but malformed
-    if (decoded) {
-      return unwrapV2(decoded, methods.password);
+    try {
+      return tryUnwrapV2(blob, methods.password);
+    } catch (err) {
+      v2Error = err; // fall through to the legacy attempt
     }
   }
-  return unwrapLegacy(blob, methods.legacy);
+
+  try {
+    return unwrapLegacy(blob, methods.legacy);
+  } catch (legacyError) {
+    if (v2Error !== undefined) {
+      throw new Error(
+        `keyslot unwrap failed (v2: ${errMsg(v2Error)}; legacy: ${errMsg(legacyError)})`,
+      );
+    }
+    throw legacyError;
+  }
 }
 
-function unwrapV2(decoded: DecodedV2Slot, password?: PasswordUnlock): Uint8Array {
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Decode and unwrap a blob via the v2 path, reconstructing the header AAD. */
+function tryUnwrapV2(blob: Uint8Array, password?: PasswordUnlock): Uint8Array {
+  const decoded = decodeV2Slot(blob);
+  if (!decoded) {
+    throw new Error('not a v2 keyslot blob');
+  }
+  // The header (AAD) is everything before the nonce: 5 header bytes + params.
+  const aad = blob.subarray(0, 5 + decoded.params.length);
+  return unwrapV2(decoded, aad, password);
+}
+
+function unwrapV2(decoded: DecodedV2Slot, aad: Uint8Array, password?: PasswordUnlock): Uint8Array {
   switch (decoded.slotType) {
     case SLOT_TYPE_PASSWORD: {
       if (!password) {
@@ -295,7 +357,7 @@ function unwrapV2(decoded: DecodedV2Slot, password?: PasswordUnlock): Uint8Array
         salt,
         argon,
       );
-      return gcm(slotKey, decoded.nonce).decrypt(decoded.ct);
+      return gcm(slotKey, decoded.nonce, aad).decrypt(decoded.ct);
     }
     default:
       throw new Error(`unsupported keyslot slot type ${decoded.slotType}`);
