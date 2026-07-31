@@ -1,4 +1,4 @@
-import { decode } from '@ipld/dag-cbor';
+import { decode, encode } from '@ipld/dag-cbor';
 import type { FeedPermissionPayload, NotaryBlock } from '@pulse-protocol/types';
 import { describe, expect, it } from 'vitest';
 import { marshalFeedPermission, unmarshalFeedPermission } from '../cbor-feedpermission.js';
@@ -183,5 +183,83 @@ describe('FeedPermissionPayload CBOR — v2', () => {
     expect(() => unmarshalFeedPermission(tampered)).toThrow(
       'dd is not valid in feed-permission version 1',
     );
+  });
+
+  /**
+   * "dd" type discipline.
+   *
+   * Mirrors pulse-protocol-go/ipfs/cbor_feedpermission_v2_test.go:
+   *   - TestUnmarshalFeedPermission_RejectsNonStringDataDescriptionAtV2
+   *   - TestUnmarshalFeedPermission_RejectsNonStringDataDescriptionAtV1
+   *   - TestUnmarshalFeedPermission_AcceptsEmptyDataDescriptionAtV1
+   *
+   * Go reaches these outcomes via ipfs.OptString, which returns "" for an absent
+   * key and an error for a present-but-non-string one. The TypeScript decoder
+   * hands back whatever CBOR contained, so it must type-check "dd" explicitly or
+   * a forged block could smuggle a non-string into `dataDescription: string`.
+   */
+  describe('dd type discipline', () => {
+    /**
+     * Forges a block carrying an arbitrary "dd" value at an arbitrary version —
+     * something no marshaller would emit. Counterpart of the Go tests'
+     * replaceValue helper; dag-cbor re-sorts the keys canonically on encode.
+     */
+    function forge(dd: unknown, version: number): Uint8Array {
+      const raw = rawMap(marshalFeedPermission(v2Sample));
+      raw.dd = dd;
+      raw.v = version;
+      return encode(raw);
+    }
+
+    // A non-string dd is refused on type grounds at every version, so it can
+    // never reach the payload. Go: OptString's AsString error, wrapped as "dd: …".
+    //
+    // The falsy entries (0, false) are the ones a truthiness test waves through:
+    // at v1 they slip past a `if (dd)` version guard entirely, so a v1 record can
+    // carry a v2-only field undetected. They are not padding — they are the bug.
+    const illTyped: Array<[string, unknown]> = [
+      ['int', 7],
+      ['zero', 0],
+      ['bool', true],
+      ['false', false],
+      ['list', ['a']],
+    ];
+
+    for (const [name, dd] of illTyped) {
+      it(`rejects a non-string data description at v2 (${name})`, () => {
+        expect(() => unmarshalFeedPermission(forge(dd, 2))).toThrow(/dd/);
+      });
+
+      it(`rejects a non-string data description at v1 (${name})`, () => {
+        expect(() => unmarshalFeedPermission(forge(dd, 1))).toThrow(/dd/);
+      });
+    }
+
+    it('rejects a non-empty string data description at v1', () => {
+      expect(() => unmarshalFeedPermission(forge('x', 1))).toThrow(
+        'dd is not valid in feed-permission version 1',
+      );
+    });
+
+    it('accepts an empty-string data description at v1', () => {
+      // Go's OptString cannot tell an empty dd from an absent one, so its v1
+      // rejection rule does not fire here. Matching that exactly matters more
+      // than the rule reading tidily: a stricter TypeScript decoder would reject
+      // blocks Go accepts, splitting the two implementations' view of validity.
+      const got = unmarshalFeedPermission(forge('', 1));
+      expect(got.dataDescription).toBeUndefined();
+    });
+
+    it('does not coerce a non-string dd into the payload', () => {
+      // The failure mode being guarded: a silent blind cast would have produced
+      // `dataDescription` holding a number, defeating its declared string type.
+      let caught: unknown;
+      try {
+        unmarshalFeedPermission(forge(7, 2));
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(Error);
+    });
   });
 });

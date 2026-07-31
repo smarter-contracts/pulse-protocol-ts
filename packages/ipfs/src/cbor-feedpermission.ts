@@ -68,7 +68,7 @@ export function marshalFeedPermission(p: FeedPermissionPayload): Uint8Array {
  *
  * Both wire versions are accepted: v1 records carry no "dd" field, and v2 records
  * may carry it. Any other version is rejected, as is a v1 record carrying the
- * v2-only "dd" field.
+ * v2-only "dd" field and any record whose "dd" is present but not a string.
  *
  * Mirrors pulse-protocol-go/ipfs.UnmarshalFeedPermission.
  */
@@ -79,8 +79,23 @@ export function unmarshalFeedPermission(block: Uint8Array): FeedPermissionPayloa
   if (version !== FEED_PERMISSION_VERSION_V1 && version !== FEED_PERMISSION_VERSION_V2) {
     throw new Error(`Unexpected version: ${version}`);
   }
-  const dd = obj.dd as string | undefined;
-  if (dd && version < FEED_PERMISSION_VERSION_V2) {
+  // "dd" is optional and v2-only. Mirrors Go's ipfs.OptString followed by the
+  // version rule: an absent key reads as the empty string, a present-but-non-string
+  // value is an error at every version, and only a non-empty value is treated as
+  // the v2-only feature a v1 record may not carry.
+  //
+  // The type check cannot be skipped in favour of a truthiness test. CBOR is an
+  // untrusted input here, and `obj.dd` is whatever the block author put there —
+  // an unchecked cast would let `dd: 7` land in `dataDescription: string`, and let
+  // falsy values such as `dd: 0` slip past the v1 guard that Go rejects outright.
+  let dd = '';
+  if (Object.hasOwn(obj, 'dd')) {
+    if (typeof obj.dd !== 'string') {
+      throw new Error(`dd: expected string, got ${obj.dd === null ? 'null' : typeof obj.dd}`);
+    }
+    dd = obj.dd;
+  }
+  if (dd !== '' && version < FEED_PERMISSION_VERSION_V2) {
     throw new Error(`dd is not valid in feed-permission version ${version}`);
   }
   const payload: FeedPermissionPayload = {
