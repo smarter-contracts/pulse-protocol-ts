@@ -5,7 +5,8 @@
     "packages/types/src/index.ts",
     "packages/crypto/src/index.ts",
     "packages/ipfs/src/index.ts",
-    "packages/consent/src/index.ts"
+    "packages/consent/src/index.ts",
+    "packages/registry/src/index.ts"
   ],
   "entryPointStrategy": "resolve",
   "out": "docs/api",
