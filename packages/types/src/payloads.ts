@@ -26,12 +26,39 @@ export interface NotaryBlock {
 }
 
 /**
- * Unencrypted payload for a Feed Permission consent.
+ * Wire versions of the feed-permission payload.
  *
- * Grants an external feed service permission to write data into a specific
- * container in the grantor's Solid pod. The pod container path is constrained
- * to "pulse/feeds/{feedType}/" to ensure external services can only write to
- * designated feed containers.
+ * Version 1 constrained the pod container path to "pulse/feeds/{feedType}/" and
+ * had no data description. Version 2 generalises the container path to any region
+ * under "pulse/" and adds the human-readable dataDescription field. Both versions
+ * deserialise into the same interface; the marshaller picks the lowest version
+ * that can represent the payload, so records produced by v1 callers keep their
+ * bytes (and therefore their CIDs) unchanged.
+ *
+ * Mirrors pulse-protocol-go/types/payloads/feedpermission.VersionV1/VersionV2.
+ */
+export const FEED_PERMISSION_VERSION_V1 = 1;
+export const FEED_PERMISSION_VERSION_V2 = 2;
+
+/**
+ * Unencrypted payload by which a grantor authorises an inbound data feed to
+ * write into their own Solid pod.
+ *
+ * The counterparty is an upstream feed provider — a KYC or verifiable-credential
+ * issuer, a Companies House director list, a vulnerable-person record service,
+ * and so on. The grantor is the pod owner. The payload therefore describes a
+ * write permission granted *into* the grantor's pod, scoped to:
+ *
+ *  - the grantor's pod only (grantorWebId),
+ *  - one named feed provider only (counterpartyDid, feedType),
+ *  - one container region under "pulse/" (podContainerPath),
+ *  - the listed access modes (permissions),
+ *  - optionally a time window (issuedAt, expiresAt).
+ *
+ * Scope questions ("may this feed write to this path?") are answered by `covers`.
+ * Liveness questions (expiry, on-chain revocation) belong to the enforcing service.
+ *
+ * Mirrors pulse-protocol-go/types/payloads/feedpermission.FeedPermissionPayload.
  */
 export interface FeedPermissionPayload {
   /** Sequential consent number within this wallet/counterparty pair. */
@@ -40,16 +67,26 @@ export interface FeedPermissionPayload {
   walletId: string;
   /** WebID of the grantor (Solid pod owner). */
   grantorWebId: string;
-  /** DID of the counterparty being granted permission. */
+  /** DID of the feed provider being granted permission. */
   counterpartyDid: string;
-  /** Feed type identifier (e.g. "open-banking", "health"). */
+  /** Feed type identifier (e.g. "open-banking", "verified-identity"). */
   feedType: string;
-  /** Target Solid pod container path — must be "pulse/feeds/{feedType}/". */
+  /**
+   * Pod-relative container the feed provider may write to. At v1 this was always
+   * "pulse/feeds/{feedType}/"; at v2 it may be any container region under
+   * "pulse/" (e.g. "pulse/credentials/identity/").
+   */
   podContainerPath: string;
-  /** Set of permission strings granted (e.g. ["read", "write"]). */
+  /** Access modes granted; vocabulary is {"read", "write", "append"} — see `covers`. */
   permissions: string[];
-  /** Data categories covered by this consent (e.g. ["transaction-history"]). */
+  /** Machine-readable data category codes (e.g. ["transaction-history"]). */
   dataCategories: string[];
+  /**
+   * Human-readable description of the data this feed will write, shown to the
+   * grantor when they authorise it (e.g. "Verified Identity Credential").
+   * Added at v2; optional — omitted when empty.
+   */
+  dataDescription?: string;
   /** Unix timestamp (seconds) at which this consent was issued. */
   issuedAt: number;
   /** Unix timestamp (seconds) at which this consent expires; 0 = no expiry. */
@@ -60,4 +97,10 @@ export interface FeedPermissionPayload {
   notaryKey1: Uint8Array;
   /** 33-byte compressed secp256k1 public key used to encrypt the notary block (Mid-Tier notary). */
   notaryKey2: Uint8Array;
+  /**
+   * Grantor's extended public key at m/4410704'/{slot}, included when the sender
+   * wishes the recipient to store it for future per-consent key derivation.
+   * Optional — omitted when empty.
+   */
+  grantorXpub?: string;
 }

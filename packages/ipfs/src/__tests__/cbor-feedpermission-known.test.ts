@@ -57,6 +57,42 @@ const knownV1Hex =
   'af61746f666565642d7065726d697373696f6e61760162636e182a62646382737472616e73616374696f6e2d686973746f72796f6163636f756e742d62616c616e636562656e4501020304056266746c6f70656e2d62616e6b696e6762706d8264726561646577726974656363706478196469643a7765623a66656564732e6578616d706c652e636f6d636578701a671db480636961741a6553f100636e6b315821020000000000000000000000000000000000000000000000000000000000000000636e6b32582103000000000000000000000000000000000000000000000000000000000000000063706370781970756c73652f66656564732f6f70656e2d62616e6b696e672f637769646d776c742d63616e6172792d76316467776964782968747470733a2f2f706f642e6578616d706c652f616c6963652f70726f66696c652f63617264236d65';
 const knownV1Cid = 'bafyreic6ntajpiaijirww2ghopyqyzccffrjv3h5h6r4nsgljiza7rcuia';
 
+const knownGrantorXpub = 'xpub661MyMwAqRbcGRandomTestXpubValue';
+
+const knownV1XpubHex =
+  'b061746f666565642d7065726d697373696f6e61760162636e182a62646382737472616e73616374696f6e2d686973746f72796f6163636f756e742d62616c616e636562656e4501020304056266746c6f70656e2d62616e6b696e676267787824787075623636314d794d7741715262634752616e646f6d546573745870756256616c756562706d8264726561646577726974656363706478196469643a7765623a66656564732e6578616d706c652e636f6d636578701a671db480636961741a6553f100636e6b315821020000000000000000000000000000000000000000000000000000000000000000636e6b32582103000000000000000000000000000000000000000000000000000000000000000063706370781970756c73652f66656564732f6f70656e2d62616e6b696e672f637769646d776c742d63616e6172792d76316467776964782968747470733a2f2f706f642e6578616d706c652f616c6963652f70726f66696c652f63617264236d65';
+const knownV1XpubCid = 'bafyreiewgchrq32ixuofa3mhhd6qwid3tjbq2qhf2owed3x54vrghjo3xi';
+
+/**
+ * Generalised inbound-feed permission — a verified-credential provider granted
+ * write access to "pulse/credentials/identity/", with a human-readable data
+ * description. Both are v2-only features. Mirrors knownV2Payload() in Go.
+ */
+const knownV2Payload: FeedPermissionPayload = {
+  consentNo: 7,
+  walletId: 'wlt-canary-v2',
+  grantorWebId: 'https://pod.example/alice/profile/card#me',
+  counterpartyDid: 'did:web:vc.example.com',
+  feedType: 'verified-identity',
+  podContainerPath: 'pulse/credentials/identity/',
+  permissions: ['write'],
+  dataCategories: ['identity-document'],
+  dataDescription: 'Verified Identity Credential',
+  issuedAt: 1_700_000_000,
+  expiresAt: 1_730_000_000,
+  encryptedNotary: new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05]),
+  notaryKey1: knownNotaryKey1(),
+  notaryKey2: knownNotaryKey2(),
+};
+
+const knownV2Hex =
+  'b061746f666565642d7065726d697373696f6e61760262636e0762646381716964656e746974792d646f63756d656e74626464781c5665726966696564204964656e746974792043726564656e7469616c62656e4501020304056266747176657269666965642d6964656e7469747962706d8165777269746563637064766469643a7765623a76632e6578616d706c652e636f6d636578701a671db480636961741a6553f100636e6b315821020000000000000000000000000000000000000000000000000000000000000000636e6b32582103000000000000000000000000000000000000000000000000000000000000000063706370781b70756c73652f63726564656e7469616c732f6964656e746974792f637769646d776c742d63616e6172792d76326467776964782968747470733a2f2f706f642e6578616d706c652f616c6963652f70726f66696c652f63617264236d65';
+const knownV2Cid = 'bafyreic4owlz2uf5xezrdqz4puabncdtgardr32r5k7v5ndsmoti76knpu';
+
+const knownV2XpubHex =
+  'b161746f666565642d7065726d697373696f6e61760262636e0762646381716964656e746974792d646f63756d656e74626464781c5665726966696564204964656e746974792043726564656e7469616c62656e4501020304056266747176657269666965642d6964656e746974796267787824787075623636314d794d7741715262634752616e646f6d546573745870756256616c756562706d8165777269746563637064766469643a7765623a76632e6578616d706c652e636f6d636578701a671db480636961741a6553f100636e6b315821020000000000000000000000000000000000000000000000000000000000000000636e6b32582103000000000000000000000000000000000000000000000000000000000000000063706370781b70756c73652f63726564656e7469616c732f6964656e746974792f637769646d776c742d63616e6172792d76326467776964782968747470733a2f2f706f642e6578616d706c652f616c6963652f70726f66696c652f63617264236d65';
+const knownV2XpubCid = 'bafyreic6zre32hvmfc7r66x25k7odgz4ceyoqx6uboayqitzqkmassstym';
+
 describe('feed-permission v1 known answers', () => {
   it('marshals the v1 canary payload to the exact Go bytes', () => {
     expect(toHex(marshalFeedPermission(knownV1Payload))).toBe(knownV1Hex);
@@ -76,5 +112,37 @@ describe('feed-permission v1 known answers', () => {
     expect(got.permissions).toEqual(knownV1Payload.permissions);
     expect(got.dataCategories).toEqual(knownV1Payload.dataCategories);
     expect(got.encryptedNotary).toEqual(knownV1Payload.encryptedNotary);
+  });
+
+  it('marshals the v1 canary payload with grantorXpub to the exact Go bytes', async () => {
+    const block = marshalFeedPermission({ ...knownV1Payload, grantorXpub: knownGrantorXpub });
+    expect(toHex(block)).toBe(knownV1XpubHex);
+    expect(await getCid(block)).toBe(knownV1XpubCid);
+  });
+});
+
+describe('feed-permission v2 known answers', () => {
+  it('marshals the v2 canary payload to the exact Go bytes', async () => {
+    const block = marshalFeedPermission(knownV2Payload);
+    expect(toHex(block)).toBe(knownV2Hex);
+    expect(await getCid(block)).toBe(knownV2Cid);
+  });
+
+  it('marshals the v2 canary payload with grantorXpub to the exact Go bytes', async () => {
+    const block = marshalFeedPermission({ ...knownV2Payload, grantorXpub: knownGrantorXpub });
+    expect(toHex(block)).toBe(knownV2XpubHex);
+    expect(await getCid(block)).toBe(knownV2XpubCid);
+  });
+
+  it('decodes the pinned v2 bytes', () => {
+    const block = Uint8Array.from(
+      (knownV2Hex.match(/../g) ?? []).map((h) => Number.parseInt(h, 16)),
+    );
+    const got = unmarshalFeedPermission(block);
+    expect(got.podContainerPath).toBe(knownV2Payload.podContainerPath);
+    expect(got.dataDescription).toBe(knownV2Payload.dataDescription);
+    expect(got.feedType).toBe(knownV2Payload.feedType);
+    expect(got.permissions).toEqual(knownV2Payload.permissions);
+    expect(got.grantorXpub).toBeUndefined();
   });
 });
