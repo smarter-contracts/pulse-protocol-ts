@@ -16,8 +16,9 @@
  *         [2B paramLen big-endian][paramLen bytes params]
  *         [12B nonce][ciphertext]
  *
- *     slotType 1 = password/argon2 (2=device-key, 3=webauthn-prf, 4=kms-oracle
- *     are reserved). type-1 params are 25 bytes:
+ *     slotType 1 = password/argon2 and 4 = oracle (see the oracle helpers
+ *     below); 2=device-key and 3=webauthn-prf are reserved. type-1 params are
+ *     25 bytes:
  *
  *         [16B argon salt][4B m big-endian][4B t big-endian][1B p]
  *
@@ -72,6 +73,30 @@ const PASSWORD_PARAM_LEN = SALT_SIZE + 4 + 4 + 1; // 25
 const ORACLE_KEYID_LEN_SIZE = 2; // [2B keyIdLen BE] prefix in oracle params
 /** Length of a wrappedSlotKey: 12B nonce + 48B AES-256-GCM(slotKey, KEK). */
 export const WRAPPED_SLOT_KEY_SIZE = NONCE_SIZE + WRAP_SIZE; // 60
+
+/**
+ * Argon2id parameter bounds enforced when decoding a v2 password keyslot.
+ *
+ * The parameters are stored in the blob header, and that header is the AEAD's
+ * additional authenticated data — so they must be read, and the slot key
+ * derived, BEFORE the authentication tag can vouch for them. A tampered or
+ * hostile blob therefore dictates the cost of a derivation that has not yet been
+ * authenticated: flipping the single most-significant byte of the big-endian 'm'
+ * field turns 256 KiB into roughly 16 GiB, and the process dies with an
+ * out-of-memory fault. Bounding the parameters at decode time, before any
+ * derivation is attempted, closes that denial-of-service.
+ *
+ * The ceilings are generous enough to allow any plausible future hardening of
+ * the production parameters (currently m=65536, t=3, p=1) while keeping the
+ * worst case a bounded allocation. These values must stay identical to the Go
+ * constants in pulse-protocol-go/crypto/keyslot.go.
+ */
+export const MIN_ARGON_M = 8; // Argon2 itself also requires m >= 8*p
+export const MAX_ARGON_M = 2097152; // 2 GiB expressed in KiB
+export const MIN_ARGON_T = 1;
+export const MAX_ARGON_T = 64;
+export const MIN_ARGON_P = 1;
+export const MAX_ARGON_P = 16;
 
 /** Argon2id parameters. */
 export interface ArgonParams {
@@ -253,6 +278,9 @@ export function encodeV2PasswordSlot(
   if (nonce.length !== NONCE_SIZE) {
     throw new Error(`nonce must be ${NONCE_SIZE} bytes, got ${nonce.length}`);
   }
+  // Same bounds as the decoder, so a writer can never produce a blob that the
+  // reader will refuse. The encoded byte format is unchanged.
+  validateArgonParams(params);
   const header = buildV2PasswordHeader(slotType, salt, params);
   const ct = gcm(slotKey, nonce, header).encrypt(kw);
   return concatBytes(header, nonce, ct);
@@ -289,7 +317,44 @@ export function decodeV2Slot(blob: Uint8Array): DecodedV2Slot | null {
   return { slotType, params, nonce, ct };
 }
 
-/** Extract the salt and Argon2id parameters from a type-1 params block. */
+/**
+ * Bound the Argon2id cost parameters read out of a keyslot blob. See the
+ * MIN_ARGON_M..MAX_ARGON_P block for why this must happen before any derivation:
+ * the parameters are attacker-controllable until the AEAD tag has been checked,
+ * and the tag cannot be checked without first deriving the key.
+ */
+function validateArgonParams({ m, t, p }: ArgonParams): void {
+  // Decoded parameters are always integers; this rejects NaN and fractional
+  // values from a JavaScript caller, which Go's uint32 typing rules out.
+  if (!Number.isInteger(m) || !Number.isInteger(t) || !Number.isInteger(p)) {
+    throw new Error(`argon2 parameters out of range: m=${m}, t=${t}, p=${p} must be integers`);
+  }
+  if (p < MIN_ARGON_P || p > MAX_ARGON_P) {
+    throw new Error(
+      `argon2 parameters out of range: p=${p} outside [${MIN_ARGON_P},${MAX_ARGON_P}]`,
+    );
+  }
+  if (t < MIN_ARGON_T || t > MAX_ARGON_T) {
+    throw new Error(
+      `argon2 parameters out of range: t=${t} outside [${MIN_ARGON_T},${MAX_ARGON_T}]`,
+    );
+  }
+  if (m < MIN_ARGON_M || m > MAX_ARGON_M) {
+    throw new Error(
+      `argon2 parameters out of range: m=${m} outside [${MIN_ARGON_M},${MAX_ARGON_M}]`,
+    );
+  }
+  // Argon2 requires at least 8 KiB of memory per lane.
+  if (m < 8 * p) {
+    throw new Error(`argon2 parameters out of range: m=${m} is below the required 8*p=${8 * p}`);
+  }
+}
+
+/**
+ * Extract the salt and Argon2id parameters from a type-1 params block, rejecting
+ * parameters outside the accepted bounds before the caller can feed them to a
+ * derivation.
+ */
 function decodePasswordParams(params: Uint8Array): { salt: Uint8Array; argon: ArgonParams } {
   if (params.length !== PASSWORD_PARAM_LEN) {
     throw new Error(
@@ -301,7 +366,9 @@ function decodePasswordParams(params: Uint8Array): { salt: Uint8Array; argon: Ar
   const m = view.getUint32(SALT_SIZE, false);
   const t = view.getUint32(SALT_SIZE + 4, false);
   const p = view.getUint8(SALT_SIZE + 8);
-  return { salt, argon: { m, t, p } };
+  const argon = { m, t, p };
+  validateArgonParams(argon);
+  return { salt, argon };
 }
 
 // ─── Oracle (type-4) slot ─────────────────────────────────────────────────────
@@ -418,9 +485,10 @@ export function decodeOracleParams(blob: Uint8Array): OracleParams {
  * Recover Kw from a keyslot blob, dispatching on the encoding.
  *
  * A blob whose first byte is 0xB0 is *attempted* as v2 first. Crucially, if the
- * v2 attempt fails for ANY reason — wrong version, inconsistent paramLen, a
- * failed authentication tag, or simply that no v2 unlock method was supplied —
- * the reader falls back to attempting the legacy decode. This is required for
+ * v2 attempt fails for ANY reason — wrong version, inconsistent paramLen,
+ * out-of-range Argon2id parameters, a failed authentication tag, or simply that
+ * no v2 unlock method was supplied — the reader falls back to attempting the
+ * legacy decode. This is required for
  * correctness: a genuine legacy blob whose random salt happens to start with
  * 0xB0 (roughly 1 in 256) would otherwise be misread as a malformed v2 blob and
  * become undecryptable. An error is surfaced only when BOTH the v2 and legacy
