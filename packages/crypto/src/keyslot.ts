@@ -16,8 +16,9 @@
  *         [2B paramLen big-endian][paramLen bytes params]
  *         [12B nonce][ciphertext]
  *
- *     slotType 1 = password/argon2 (2=device-key, 3=webauthn-prf, 4=kms-oracle
- *     are reserved). type-1 params are 25 bytes:
+ *     slotType 1 = password/argon2 and 4 = oracle (see the oracle helpers
+ *     below); 2=device-key and 3=webauthn-prf are reserved. type-1 params are
+ *     25 bytes:
  *
  *         [16B argon salt][4B m big-endian][4B t big-endian][1B p]
  *
@@ -57,13 +58,21 @@ export const SLOT_TYPE_PASSWORD = 1;
 /** Reserved slot types (not yet implemented). */
 export const SLOT_TYPE_DEVICE_KEY = 2;
 export const SLOT_TYPE_WEBAUTHN_PRF = 3;
-export const SLOT_TYPE_KMS_ORACLE = 4;
+/**
+ * Acr-gated key-oracle slot (see the oracle helpers below). Its slot key is held
+ * only by the pulse-keyslot-oracle service and is never derivable locally, so
+ * this slot type has no local unwrap path.
+ */
+export const SLOT_TYPE_ORACLE = 4;
 
 const KW_SIZE = 32; // wallet key length
 const SALT_SIZE = 16; // Argon2id salt length
 const NONCE_SIZE = 12; // AES-256-GCM nonce length
 const WRAP_SIZE = 48; // AES-256-GCM(Kw): 32 ciphertext + 16 tag
 const PASSWORD_PARAM_LEN = SALT_SIZE + 4 + 4 + 1; // 25
+const ORACLE_KEYID_LEN_SIZE = 2; // [2B keyIdLen BE] prefix in oracle params
+/** Length of a wrappedSlotKey: 12B nonce + 48B AES-256-GCM(slotKey, KEK). */
+export const WRAPPED_SLOT_KEY_SIZE = NONCE_SIZE + WRAP_SIZE; // 60
 
 /**
  * Argon2id parameter bounds enforced when decoding a v2 password keyslot.
@@ -121,6 +130,14 @@ export interface DecodedV2Slot {
   params: Uint8Array;
   nonce: Uint8Array;
   ct: Uint8Array;
+}
+
+/** Decoded contents of an oracle (type-4) keyslot's params. */
+export interface OracleParams {
+  /** Names the oracle master key and, via the oracle keyring, the minimum acr. */
+  keyId: string;
+  /** The oracle-wrapped slot key: 12B nonce ++ AES-256-GCM(slotKey, KEK). */
+  wrappedSlotKey: Uint8Array;
 }
 
 // ─── Kw generation and wrapping ─────────────────────────────────────────────
@@ -354,6 +371,114 @@ function decodePasswordParams(params: Uint8Array): { salt: Uint8Array; argon: Ar
   return { salt, argon };
 }
 
+// ─── Oracle (type-4) slot ─────────────────────────────────────────────────────
+
+/**
+ * Assemble the header of a v2 oracle keyslot blob — everything before the outer
+ * nonce:
+ *
+ *     [magic 0xB0][version 0x02][slotType 0x04][paramLen 2B BE][params]
+ *
+ * with params = [2B keyIdLen BE][keyId UTF-8][wrappedSlotKey].
+ */
+function buildV2OracleHeader(keyId: string, wrappedSlotKey: Uint8Array): Uint8Array {
+  const keyIdBytes = utf8(keyId);
+  const paramBlock = new Uint8Array(
+    ORACLE_KEYID_LEN_SIZE + keyIdBytes.length + wrappedSlotKey.length,
+  );
+  new DataView(paramBlock.buffer).setUint16(0, keyIdBytes.length, false); // big-endian
+  paramBlock.set(keyIdBytes, ORACLE_KEYID_LEN_SIZE);
+  paramBlock.set(wrappedSlotKey, ORACLE_KEYID_LEN_SIZE + keyIdBytes.length);
+
+  const prefix = new Uint8Array(5);
+  prefix[0] = KEYSLOT_MAGIC;
+  prefix[1] = KEYSLOT_VERSION;
+  prefix[2] = SLOT_TYPE_ORACLE;
+  new DataView(prefix.buffer).setUint16(3, paramBlock.length, false);
+
+  return concatBytes(prefix, paramBlock);
+}
+
+/**
+ * Assemble a full v2 oracle keyslot blob from its parts.
+ *
+ * keyId and wrappedSlotKey populate the type-4 params. nonce and ct are the outer
+ * envelope: ct MUST be AES-256-GCM(plaintext=Kw, key=slotKey, nonce) with NO
+ * additional authenticated data — i.e. the output of wrapKw(kw, slotKey, nonce).
+ * The oracle body is intentionally not header-bound (mirroring unwrapKw, which
+ * takes no AAD): keyId and wrappedSlotKey are independently authenticated when
+ * the oracle opens wrappedSlotKey under its KEK, and the outer body is
+ * authenticated by its own GCM tag under slotKey.
+ *
+ * Byte-identical mirror of EncodeV2OracleSlot in
+ * pulse-protocol-go/crypto/keyslot_oracle.go.
+ */
+export function encodeV2OracleSlot(
+  keyId: string,
+  wrappedSlotKey: Uint8Array,
+  nonce: Uint8Array,
+  ct: Uint8Array,
+): Uint8Array {
+  if (keyId.length === 0) {
+    throw new Error('malformed v2 keyslot: empty oracle keyId');
+  }
+  if (wrappedSlotKey.length === 0) {
+    throw new Error('malformed v2 keyslot: empty wrappedSlotKey');
+  }
+  if (nonce.length !== NONCE_SIZE) {
+    throw new Error(`nonce must be ${NONCE_SIZE} bytes, got ${nonce.length}`);
+  }
+  if (ct.length === 0) {
+    throw new Error('malformed v2 keyslot: empty ciphertext');
+  }
+  const header = buildV2OracleHeader(keyId, wrappedSlotKey);
+  return concatBytes(header, nonce, ct);
+}
+
+/** Parse a type-4 params block into its keyId and wrappedSlotKey. */
+function parseOracleParams(params: Uint8Array): OracleParams {
+  if (params.length < ORACLE_KEYID_LEN_SIZE) {
+    throw new Error(`malformed v2 keyslot: oracle params too short (${params.length} bytes)`);
+  }
+  const view = new DataView(params.buffer, params.byteOffset, params.byteLength);
+  const keyIdLen = view.getUint16(0, false);
+  if (params.length < ORACLE_KEYID_LEN_SIZE + keyIdLen) {
+    throw new Error('malformed v2 keyslot: oracle keyId truncated');
+  }
+  const keyIdBytes = params.subarray(ORACLE_KEYID_LEN_SIZE, ORACLE_KEYID_LEN_SIZE + keyIdLen);
+  const wrapped = params.subarray(ORACLE_KEYID_LEN_SIZE + keyIdLen);
+  if (wrapped.length === 0) {
+    throw new Error('malformed v2 keyslot: oracle params missing wrappedSlotKey');
+  }
+  return {
+    keyId: new TextDecoder().decode(keyIdBytes),
+    // Copy so callers cannot mutate the source blob through the result.
+    wrappedSlotKey: wrapped.slice(),
+  };
+}
+
+/**
+ * Decode a v2 oracle keyslot blob and return the oracle coordinates a client
+ * needs to obtain the slot key: the master-key id and the oracle-wrapped slot
+ * key. It does NOT (and cannot) recover Kw — the slot key is held only by the
+ * oracle. Once a client has obtained slotKey from the oracle it recovers Kw with
+ * unwrapKw(ct, slotKey, nonce), where ct and nonce come from the same blob via
+ * decodeV2Slot.
+ *
+ * Byte-identical mirror of DecodeOracleParams in
+ * pulse-protocol-go/crypto/keyslot_oracle.go.
+ */
+export function decodeOracleParams(blob: Uint8Array): OracleParams {
+  const decoded = decodeV2Slot(blob);
+  if (!decoded) {
+    throw new Error('not a v2 keyslot blob');
+  }
+  if (decoded.slotType !== SLOT_TYPE_ORACLE) {
+    throw new Error(`unsupported keyslot slot type ${decoded.slotType}: not an oracle slot`);
+  }
+  return parseOracleParams(decoded.params);
+}
+
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
 /**
@@ -426,6 +551,10 @@ function unwrapV2(decoded: DecodedV2Slot, aad: Uint8Array, password?: PasswordUn
       );
       return gcm(slotKey, decoded.nonce, aad).decrypt(decoded.ct);
     }
+    case SLOT_TYPE_ORACLE:
+      // Oracle slots carry no local secret; the slot key lives only in the
+      // oracle service. Recognise the slot type but refuse to unwrap locally.
+      throw new Error('oracle keyslot must be unwrapped via the key oracle');
     default:
       throw new Error(`unsupported keyslot slot type ${decoded.slotType}`);
   }
