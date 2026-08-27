@@ -16,9 +16,9 @@
  *         [2B paramLen big-endian][paramLen bytes params]
  *         [12B nonce][ciphertext]
  *
- *     slotType 1 = password/argon2 and 4 = oracle (see the oracle helpers
- *     below); 2=device-key and 3=webauthn-prf are reserved. type-1 params are
- *     25 bytes:
+ *     slotType 1 = password/argon2, 4 = oracle and 5 = escrow (see the oracle
+ *     and escrow helpers below); 2=device-key and 3=webauthn-prf are reserved.
+ *     type-1 params are 25 bytes:
  *
  *         [16B argon salt][4B m big-endian][4B t big-endian][1B p]
  *
@@ -64,13 +64,41 @@ export const SLOT_TYPE_WEBAUTHN_PRF = 3;
  * this slot type has no local unwrap path.
  */
 export const SLOT_TYPE_ORACLE = 4;
+/**
+ * Escrow slot (see the escrow helpers below): the same wire shape as the oracle
+ * slot under a distinct type byte, opened only by the escrow plane under audited
+ * controls. Like the oracle slot it carries no locally derivable secret, so it
+ * too has no local unwrap path.
+ *
+ * The type byte is legibility, NOT enforcement. Which plane may open a slot is
+ * decided by the key class of the keyId in the escrow/oracle keyring, never by
+ * the slot-type byte in a blob — a blob is attacker-supplied data, and any
+ * enforcement that read this byte would be trusting the wrong side of the wire.
+ *
+ * The type byte is not authenticated, and the confusion is symmetric. Neither
+ * slot type binds its header into the body as AEAD additional data (both are
+ * sealed by wrapKw, which takes no AAD), and the two share one params encoding —
+ * so anyone who can write the stored blob can flip byte 2 in either direction: a
+ * type-4 blob relabelled 5 is accepted by decodeEscrowParams, and a type-5 blob
+ * relabelled 4 is accepted by decodeOracleParams, the outer body still opening
+ * under its original slot key in both cases. This is inherited from the type-4
+ * design, not introduced by the escrow slot; what the escrow slot adds is that
+ * the forgeable byte now names a *plane*.
+ */
+export const SLOT_TYPE_ESCROW = 5;
 
 const KW_SIZE = 32; // wallet key length
 const SALT_SIZE = 16; // Argon2id salt length
 const NONCE_SIZE = 12; // AES-256-GCM nonce length
 const WRAP_SIZE = 48; // AES-256-GCM(Kw): 32 ciphertext + 16 tag
 const PASSWORD_PARAM_LEN = SALT_SIZE + 4 + 4 + 1; // 25
-const ORACLE_KEYID_LEN_SIZE = 2; // [2B keyIdLen BE] prefix in oracle params
+const ORACLE_KEYID_LEN_SIZE = 2; // [2B keyIdLen BE] prefix in oracle/escrow params
+/**
+ * The largest params block a v2 header can describe: the header's paramLen field
+ * is two bytes wide (see decodeV2Slot). Must stay identical to maxV2ParamLen in
+ * pulse-protocol-go/crypto/keyslot_oracle.go.
+ */
+export const MAX_V2_PARAM_LEN = 0xffff;
 /** Length of a wrappedSlotKey: 12B nonce + 48B AES-256-GCM(slotKey, KEK). */
 export const WRAPPED_SLOT_KEY_SIZE = NONCE_SIZE + WRAP_SIZE; // 60
 
@@ -139,6 +167,18 @@ export interface OracleParams {
   /** The oracle-wrapped slot key: 12B nonce ++ AES-256-GCM(slotKey, KEK). */
   wrappedSlotKey: Uint8Array;
 }
+
+/**
+ * Decoded contents of an escrow (type-5) keyslot's params.
+ *
+ * This is an alias of, not a copy of, OracleParams: the two slot types share one
+ * params encoding, so a decoded type-4 and a decoded type-5 params block are the
+ * same value and neither side needs a conversion. The separate name exists for
+ * the same reason the separate type byte does — so call sites read as what they
+ * are. Any *behavioural* difference between the planes belongs in the keyring's
+ * key class, never in this type.
+ */
+export type EscrowParams = OracleParams;
 
 // ─── Kw generation and wrapping ─────────────────────────────────────────────
 
@@ -371,17 +411,36 @@ function decodePasswordParams(params: Uint8Array): { salt: Uint8Array; argon: Ar
   return { salt, argon };
 }
 
-// ─── Oracle (type-4) slot ─────────────────────────────────────────────────────
+// ─── Shared wrapped-slot-key codec ────────────────────────────────────────────
+//
+// The oracle (type-4) and escrow (type-5) slots share one params encoding:
+//
+//     [2B keyIdLen BE][keyId UTF-8][wrappedSlotKey]
+//
+// The two types differ only in the header's slot-type byte — deliberately so
+// (see the escrow helpers below). The codec is therefore written once and
+// parametrised over the type byte, rather than duplicated per slot type, so the
+// two encodings cannot drift apart. slotName appears only in error messages.
 
 /**
- * Assemble the header of a v2 oracle keyslot blob — everything before the outer
- * nonce:
+ * Assemble the header of a v2 wrapped-slot-key keyslot blob — everything before
+ * the outer nonce:
  *
- *     [magic 0xB0][version 0x02][slotType 0x04][paramLen 2B BE][params]
+ *     [magic 0xB0][version 0x02][slotType][paramLen 2B BE][params]
  *
  * with params = [2B keyIdLen BE][keyId UTF-8][wrappedSlotKey].
+ *
+ * Callers must have validated the input lengths first (see
+ * validateKeyIdSlotInputs); the 16-bit length fields below assume it.
+ *
+ * Byte-identical mirror of buildV2KeyIDHeader in
+ * pulse-protocol-go/crypto/keyslot_oracle.go.
  */
-function buildV2OracleHeader(keyId: string, wrappedSlotKey: Uint8Array): Uint8Array {
+function buildV2KeyIdHeader(
+  slotType: number,
+  keyId: string,
+  wrappedSlotKey: Uint8Array,
+): Uint8Array {
   const keyIdBytes = utf8(keyId);
   const paramBlock = new Uint8Array(
     ORACLE_KEYID_LEN_SIZE + keyIdBytes.length + wrappedSlotKey.length,
@@ -393,11 +452,108 @@ function buildV2OracleHeader(keyId: string, wrappedSlotKey: Uint8Array): Uint8Ar
   const prefix = new Uint8Array(5);
   prefix[0] = KEYSLOT_MAGIC;
   prefix[1] = KEYSLOT_VERSION;
-  prefix[2] = SLOT_TYPE_ORACLE;
+  prefix[2] = slotType;
   new DataView(prefix.buffer).setUint16(3, paramBlock.length, false);
 
   return concatBytes(prefix, paramBlock);
 }
+
+/**
+ * Apply the checks common to both wrapped-slot-key slot types.
+ *
+ * The binding limit is the size of the WHOLE params block, not the keyId alone.
+ * Both the keyIdLen prefix and the header's paramLen field are two bytes wide,
+ * and DataView.setUint16 writes a value that does not fit modulo 2^16 rather
+ * than failing — so bounding only the keyId leaves a band (65474..65535 bytes,
+ * with a 60-byte wrappedSlotKey) where every individual field fits but their
+ * total does not, and the encoder emits a blob whose declared paramLen disagrees
+ * with its real length. No reader can parse such a blob, so producing one
+ * silently is strictly worse than refusing. The bound is derived from the actual
+ * total below rather than hardcoded as a keyId ceiling, so it stays correct if a
+ * slot type ever carries a wrappedSlotKey of a different size.
+ *
+ * Lengths are measured in UTF-8 bytes exactly as Go measures them — not UTF-16
+ * code units, which would undercount every non-ASCII keyId.
+ */
+function validateKeyIdSlotInputs(
+  slotName: string,
+  keyId: string,
+  wrappedSlotKey: Uint8Array,
+  nonce: Uint8Array,
+  ct: Uint8Array,
+): void {
+  const keyIdBytes = utf8(keyId).length;
+  if (keyIdBytes === 0) {
+    throw new Error(`malformed v2 keyslot: empty ${slotName} keyId`);
+  }
+  if (wrappedSlotKey.length === 0) {
+    throw new Error('malformed v2 keyslot: empty wrappedSlotKey');
+  }
+  const paramLen = ORACLE_KEYID_LEN_SIZE + keyIdBytes + wrappedSlotKey.length;
+  if (paramLen > MAX_V2_PARAM_LEN) {
+    throw new Error(
+      `malformed v2 keyslot: ${slotName} params too long (${paramLen} bytes, max ${MAX_V2_PARAM_LEN}: ${keyIdBytes}-byte keyId + ${wrappedSlotKey.length}-byte wrappedSlotKey + ${ORACLE_KEYID_LEN_SIZE}-byte length prefix)`,
+    );
+  }
+  if (nonce.length !== NONCE_SIZE) {
+    throw new Error(`nonce must be ${NONCE_SIZE} bytes, got ${nonce.length}`);
+  }
+  if (ct.length === 0) {
+    throw new Error('malformed v2 keyslot: empty ciphertext');
+  }
+}
+
+/**
+ * Assemble a full v2 wrapped-slot-key keyslot blob (oracle or escrow) from its
+ * parts, after the shared input validation.
+ */
+function encodeV2KeyIdSlot(
+  slotType: number,
+  slotName: string,
+  keyId: string,
+  wrappedSlotKey: Uint8Array,
+  nonce: Uint8Array,
+  ct: Uint8Array,
+): Uint8Array {
+  validateKeyIdSlotInputs(slotName, keyId, wrappedSlotKey, nonce, ct);
+  const header = buildV2KeyIdHeader(slotType, keyId, wrappedSlotKey);
+  return concatBytes(header, nonce, ct);
+}
+
+/**
+ * Parse a wrapped-slot-key params block into its keyId and wrappedSlotKey.
+ *
+ * The params block is read before anything has authenticated it, so every length
+ * is validated against the block's actual size before it is used to slice — a
+ * declared keyIdLen never drives an allocation. The returned wrappedSlotKey is a
+ * copy, so callers cannot mutate the source blob through it.
+ *
+ * This is the permissive layer: it does not opine on how long a wrappedSlotKey
+ * should be. Callers that require the canonical WRAPPED_SLOT_KEY_SIZE enforce it
+ * on top (see decodeEscrowParams).
+ */
+function parseKeyIdParams(slotName: string, params: Uint8Array): OracleParams {
+  if (params.length < ORACLE_KEYID_LEN_SIZE) {
+    throw new Error(`malformed v2 keyslot: ${slotName} params too short (${params.length} bytes)`);
+  }
+  const view = new DataView(params.buffer, params.byteOffset, params.byteLength);
+  const keyIdLen = view.getUint16(0, false);
+  if (params.length < ORACLE_KEYID_LEN_SIZE + keyIdLen) {
+    throw new Error(`malformed v2 keyslot: ${slotName} keyId truncated`);
+  }
+  const keyIdBytes = params.subarray(ORACLE_KEYID_LEN_SIZE, ORACLE_KEYID_LEN_SIZE + keyIdLen);
+  const wrapped = params.subarray(ORACLE_KEYID_LEN_SIZE + keyIdLen);
+  if (wrapped.length === 0) {
+    throw new Error(`malformed v2 keyslot: ${slotName} params missing wrappedSlotKey`);
+  }
+  return {
+    keyId: new TextDecoder().decode(keyIdBytes),
+    // Copy so callers cannot mutate the source blob through the result.
+    wrappedSlotKey: wrapped.slice(),
+  };
+}
+
+// ─── Oracle (type-4) slot ─────────────────────────────────────────────────────
 
 /**
  * Assemble a full v2 oracle keyslot blob from its parts.
@@ -419,42 +575,22 @@ export function encodeV2OracleSlot(
   nonce: Uint8Array,
   ct: Uint8Array,
 ): Uint8Array {
-  if (keyId.length === 0) {
-    throw new Error('malformed v2 keyslot: empty oracle keyId');
-  }
-  if (wrappedSlotKey.length === 0) {
-    throw new Error('malformed v2 keyslot: empty wrappedSlotKey');
-  }
-  if (nonce.length !== NONCE_SIZE) {
-    throw new Error(`nonce must be ${NONCE_SIZE} bytes, got ${nonce.length}`);
-  }
-  if (ct.length === 0) {
-    throw new Error('malformed v2 keyslot: empty ciphertext');
-  }
-  const header = buildV2OracleHeader(keyId, wrappedSlotKey);
-  return concatBytes(header, nonce, ct);
+  return encodeV2KeyIdSlot(SLOT_TYPE_ORACLE, 'oracle', keyId, wrappedSlotKey, nonce, ct);
 }
 
-/** Parse a type-4 params block into its keyId and wrappedSlotKey. */
+/**
+ * Parse a type-4 params block into its keyId and wrappedSlotKey.
+ *
+ * Note that this does not require wrappedSlotKey to be exactly
+ * WRAPPED_SLOT_KEY_SIZE. That leniency is the historical type-4 behaviour and is
+ * kept deliberately: type-4 blobs are already deployed, and narrowing what an
+ * existing decoder accepts is a compatibility change, not a bug fix. The oracle
+ * service applies the exact-length check itself before it will open a
+ * wrappedSlotKey. The escrow slot, having no deployed blobs, is strict from the
+ * start.
+ */
 function parseOracleParams(params: Uint8Array): OracleParams {
-  if (params.length < ORACLE_KEYID_LEN_SIZE) {
-    throw new Error(`malformed v2 keyslot: oracle params too short (${params.length} bytes)`);
-  }
-  const view = new DataView(params.buffer, params.byteOffset, params.byteLength);
-  const keyIdLen = view.getUint16(0, false);
-  if (params.length < ORACLE_KEYID_LEN_SIZE + keyIdLen) {
-    throw new Error('malformed v2 keyslot: oracle keyId truncated');
-  }
-  const keyIdBytes = params.subarray(ORACLE_KEYID_LEN_SIZE, ORACLE_KEYID_LEN_SIZE + keyIdLen);
-  const wrapped = params.subarray(ORACLE_KEYID_LEN_SIZE + keyIdLen);
-  if (wrapped.length === 0) {
-    throw new Error('malformed v2 keyslot: oracle params missing wrappedSlotKey');
-  }
-  return {
-    keyId: new TextDecoder().decode(keyIdBytes),
-    // Copy so callers cannot mutate the source blob through the result.
-    wrappedSlotKey: wrapped.slice(),
-  };
+  return parseKeyIdParams('oracle', params);
 }
 
 /**
@@ -477,6 +613,96 @@ export function decodeOracleParams(blob: Uint8Array): OracleParams {
     throw new Error(`unsupported keyslot slot type ${decoded.slotType}: not an oracle slot`);
   }
   return parseOracleParams(decoded.params);
+}
+
+// ─── Escrow (type-5) slot ─────────────────────────────────────────────────────
+//
+// An escrow keyslot lets a wallet be opened while its registrant is absent — an
+// auto-onboarded wallet has to be able to sign before anyone has claimed it.
+// Like the oracle slot its slot key is never held by the client and never on
+// disk; unlike the oracle slot it is released by the escrow plane, under a
+// service credential and an audited, purpose-bound request rather than a live
+// user authentication.
+//
+// The wire format is deliberately identical to the oracle (type-4) slot — a new
+// type byte over the same param layout, not a new encoding — so the codec above
+// is shared and the two cannot drift apart. The distinct type byte exists for
+// legibility (manifest scans, tooling, the client-facing audit story), never for
+// enforcement; see SLOT_TYPE_ESCROW and
+// docs/superpowers/specs/2026-08-12-vrs-escrow-custody-design.md ("Two planes").
+//
+// Byte-identical mirror of pulse-protocol-go/crypto/keyslot_escrow.go.
+
+/**
+ * Hold the escrow slot's exact-length rule in one place, so the encoder and the
+ * decoder can never disagree about it.
+ */
+function validateEscrowWrappedSlotKey(wrappedSlotKey: Uint8Array): void {
+  if (wrappedSlotKey.length !== WRAPPED_SLOT_KEY_SIZE) {
+    throw new Error(
+      `malformed v2 keyslot: escrow wrappedSlotKey must be ${WRAPPED_SLOT_KEY_SIZE} bytes, got ${wrappedSlotKey.length}`,
+    );
+  }
+}
+
+/**
+ * Assemble a full v2 escrow keyslot blob from its parts.
+ *
+ * keyId and wrappedSlotKey populate the type-5 params. nonce and ct are the outer
+ * envelope: ct MUST be AES-256-GCM(plaintext=Kw, key=slotKey, nonce) with NO
+ * additional authenticated data — i.e. the output of wrapKw(kw, slotKey, nonce).
+ *
+ * wrappedSlotKey must be exactly WRAPPED_SLOT_KEY_SIZE bytes, and the params
+ * block as a whole must fit the header's 2-byte paramLen field (see
+ * validateKeyIdSlotInputs). Both are the same bounds decodeEscrowParams applies,
+ * so every blob this encoder returns decodes — a property asserted in
+ * __tests__/keyslot-oracle.test.ts rather than only claimed here.
+ *
+ * Byte-identical mirror of EncodeV2EscrowSlot in
+ * pulse-protocol-go/crypto/keyslot_escrow.go.
+ */
+export function encodeV2EscrowSlot(
+  keyId: string,
+  wrappedSlotKey: Uint8Array,
+  nonce: Uint8Array,
+  ct: Uint8Array,
+): Uint8Array {
+  validateEscrowWrappedSlotKey(wrappedSlotKey);
+  return encodeV2KeyIdSlot(SLOT_TYPE_ESCROW, 'escrow', keyId, wrappedSlotKey, nonce, ct);
+}
+
+/**
+ * Decode a v2 escrow keyslot blob and return the escrow coordinates a caller
+ * needs to obtain the slot key: the master-key id and the escrow-wrapped slot
+ * key. It does NOT (and cannot) recover Kw — the slot key is released only by
+ * the escrow plane. Once a caller has obtained slotKey it recovers Kw with
+ * unwrapKw(ct, slotKey, nonce), where ct and nonce come from the same blob via
+ * decodeV2Slot.
+ *
+ * The params block is attacker-controlled — it is parsed before anything
+ * authenticates it — so it is validated exactly rather than leniently: a
+ * wrappedSlotKey of any length other than WRAPPED_SLOT_KEY_SIZE, or an empty
+ * keyId, is rejected here rather than passed on to the escrow plane. Nothing has
+ * ever written a type-5 blob of another shape, so being strict from the start
+ * costs no compatibility.
+ *
+ * Byte-identical mirror of DecodeEscrowParams in
+ * pulse-protocol-go/crypto/keyslot_escrow.go.
+ */
+export function decodeEscrowParams(blob: Uint8Array): EscrowParams {
+  const decoded = decodeV2Slot(blob);
+  if (!decoded) {
+    throw new Error('not a v2 keyslot blob');
+  }
+  if (decoded.slotType !== SLOT_TYPE_ESCROW) {
+    throw new Error(`unsupported keyslot slot type ${decoded.slotType}: not an escrow slot`);
+  }
+  const params = parseKeyIdParams('escrow', decoded.params);
+  if (params.keyId.length === 0) {
+    throw new Error('malformed v2 keyslot: empty escrow keyId');
+  }
+  validateEscrowWrappedSlotKey(params.wrappedSlotKey);
+  return params;
 }
 
 // ─── Dispatch ───────────────────────────────────────────────────────────────
@@ -555,6 +781,18 @@ function unwrapV2(decoded: DecodedV2Slot, aad: Uint8Array, password?: PasswordUn
       // Oracle slots carry no local secret; the slot key lives only in the
       // oracle service. Recognise the slot type but refuse to unwrap locally.
       throw new Error('oracle keyslot must be unwrapped via the key oracle');
+    case SLOT_TYPE_ESCROW:
+      // Escrow slots carry no local secret either; the slot key is released only
+      // by the escrow plane. Recognise the slot type but refuse to unwrap
+      // locally.
+      //
+      // As with every other v2 error this still lets unwrapKeyslot fall through
+      // to the legacy attempt — required for correctness, since a genuine legacy
+      // blob's random salt can start with 0xB0 — but the message is carried into
+      // the combined error, so a caller can still tell an escrow slot from an
+      // unrecognised one. Deliberately distinct from the oracle refusal: the two
+      // slot types are opened by different planes holding different key classes.
+      throw new Error('escrow keyslot must be opened via the escrow plane');
     default:
       throw new Error(`unsupported keyslot slot type ${decoded.slotType}`);
   }
