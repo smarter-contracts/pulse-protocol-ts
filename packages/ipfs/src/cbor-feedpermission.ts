@@ -2,11 +2,16 @@ import { decode, encode } from '@ipld/dag-cbor';
 import {
   FEED_PERMISSION_VERSION_V1,
   FEED_PERMISSION_VERSION_V2,
+  FEED_PERMISSION_VERSION_V3,
   type FeedPermissionPayload,
 } from '@pulse-protocol/types';
 
 /**
  * Returns the lowest wire version able to represent the payload.
+ *
+ * v3 is required when the payload carries a previousCid — the variation link
+ * cannot be expressed below v3, so it is checked first and outranks the v2
+ * features it may compose with.
  *
  * v2 is required when the payload uses a v2-only feature: a dataDescription, or a
  * pod container path outside the v1 "pulse/feeds/{feedType}/" shape. Everything
@@ -17,6 +22,7 @@ import {
  * Mirrors pulse-protocol-go/ipfs.feedPermissionWireVersion.
  */
 function feedPermissionWireVersion(p: FeedPermissionPayload): number {
+  if (p.previousCid) return FEED_PERMISSION_VERSION_V3;
   if (p.dataDescription) return FEED_PERMISSION_VERSION_V2;
   if (p.podContainerPath && p.podContainerPath !== `pulse/feeds/${p.feedType}/`) {
     return FEED_PERMISSION_VERSION_V2;
@@ -27,11 +33,14 @@ function feedPermissionWireVersion(p: FeedPermissionPayload): number {
 /**
  * Encodes a FeedPermissionPayload as DAG-CBOR.
  *
- * Map with 15 mandatory fields plus the optional "dd" (dataDescription, v2 only)
- * and "gx" (grantorXpub) fields when non-empty — keys in DAG-CBOR canonical order
- * (length asc, then lexicographic):
+ * Map with 15 mandatory fields plus the optional "dd" (dataDescription, v2 only),
+ * "gx" (grantorXpub) and "pcid" (previousCid, v3 only) fields when non-empty —
+ * keys in DAG-CBOR canonical order (length asc, then lexicographic):
  *   t(1), v(1), cn(2), dc(2), dd(2)?, en(2), ft(2), gx(2)?, pm(2),
- *   cpd(3), exp(3), iat(3), nk1(3), nk2(3), pcp(3), wid(3), gwid(4)
+ *   cpd(3), exp(3), iat(3), nk1(3), nk2(3), pcp(3), wid(3), gwid(4), pcid(4)?
+ *
+ * The object literal below is built in declaration order; @ipld/dag-cbor sorts
+ * the keys canonically on encode, so only the list above records the wire order.
  *
  * Mirrors pulse-protocol-go/ipfs.MarshalFeedPermission.
  */
@@ -60,15 +69,20 @@ export function marshalFeedPermission(p: FeedPermissionPayload): Uint8Array {
   if (p.grantorXpub) {
     block.gx = p.grantorXpub;
   }
+  if (version >= FEED_PERMISSION_VERSION_V3 && p.previousCid) {
+    block.pcid = p.previousCid;
+  }
   return encode(block);
 }
 
 /**
  * Decodes a DAG-CBOR block into a FeedPermissionPayload.
  *
- * Both wire versions are accepted: v1 records carry no "dd" field, and v2 records
- * may carry it. Any other version is rejected, as is a v1 record carrying the
- * v2-only "dd" field and any record whose "dd" is present but not a string.
+ * All three wire versions are accepted: v1 records carry neither "dd" nor "pcid",
+ * v2 records may carry "dd", and v3 records may carry both. Any other version is
+ * rejected, as is a record carrying a field its version cannot express ("dd"
+ * below v2, "pcid" below v3) and any record whose "dd" or "pcid" is present but
+ * not a string.
  *
  * Mirrors pulse-protocol-go/ipfs.UnmarshalFeedPermission.
  */
@@ -76,7 +90,11 @@ export function unmarshalFeedPermission(block: Uint8Array): FeedPermissionPayloa
   const obj = decode(block) as Record<string, unknown>;
   if (obj.t !== 'feed-permission') throw new Error(`Unexpected type: ${obj.t}`);
   const version = obj.v;
-  if (version !== FEED_PERMISSION_VERSION_V1 && version !== FEED_PERMISSION_VERSION_V2) {
+  if (
+    version !== FEED_PERMISSION_VERSION_V1 &&
+    version !== FEED_PERMISSION_VERSION_V2 &&
+    version !== FEED_PERMISSION_VERSION_V3
+  ) {
     throw new Error(`Unexpected version: ${version}`);
   }
   // "dd" is optional and v2-only. Mirrors Go's ipfs.OptString followed by the
@@ -98,6 +116,20 @@ export function unmarshalFeedPermission(block: Uint8Array): FeedPermissionPayloa
   if (dd !== '' && version < FEED_PERMISSION_VERSION_V2) {
     throw new Error(`dd is not valid in feed-permission version ${version}`);
   }
+  // "pcid" is optional and v3-only, and is checked exactly as "dd" is above: an
+  // absent key reads as the empty string, a present-but-non-string value is an
+  // error at every version, and only a non-empty value is treated as the v3-only
+  // feature a lower-version record may not carry.
+  let pcid = '';
+  if (Object.hasOwn(obj, 'pcid')) {
+    if (typeof obj.pcid !== 'string') {
+      throw new Error(`pcid: expected string, got ${obj.pcid === null ? 'null' : typeof obj.pcid}`);
+    }
+    pcid = obj.pcid;
+  }
+  if (pcid !== '' && version < FEED_PERMISSION_VERSION_V3) {
+    throw new Error(`pcid is not valid in feed-permission version ${version}`);
+  }
   const payload: FeedPermissionPayload = {
     consentNo: obj.cn as number,
     walletId: obj.wid as string,
@@ -114,6 +146,7 @@ export function unmarshalFeedPermission(block: Uint8Array): FeedPermissionPayloa
     notaryKey2: obj.nk2 as Uint8Array,
   };
   if (dd) payload.dataDescription = dd;
+  if (pcid) payload.previousCid = pcid;
   const gx = obj.gx as string | undefined;
   if (gx) payload.grantorXpub = gx;
   return payload;

@@ -163,13 +163,15 @@ describe('FeedPermissionPayload CBOR — v2', () => {
 
   it('rejects an unknown wire version', () => {
     const block = marshalFeedPermission(v2Sample);
-    // Rewrite the "v" value from 2 to 3 (single-byte unsigned ints in CBOR).
+    // Rewrite the "v" value from 2 to 9 (single-byte unsigned ints in CBOR). 9 is
+    // used rather than the next version up so this test keeps meaning a genuinely
+    // unknown version as the known set grows.
     const idx = block.findIndex(
       (b, i) => b === 0x61 && block[i + 1] === 0x76 && block[i + 2] === 0x02,
     );
     expect(idx).toBeGreaterThan(-1);
     const tampered = Uint8Array.from(block);
-    tampered[idx + 2] = 0x03;
+    tampered[idx + 2] = 0x09;
     expect(() => unmarshalFeedPermission(tampered)).toThrow('Unexpected version');
   });
 
@@ -260,6 +262,108 @@ describe('FeedPermissionPayload CBOR — v2', () => {
         caught = e;
       }
       expect(caught).toBeInstanceOf(Error);
+    });
+  });
+});
+
+/**
+ * Wire version 3 — the variation link.
+ * Mirrors pulse-protocol-go/ipfs/cbor_feedpermission_v3_test.go.
+ */
+describe('FeedPermissionPayload CBOR — v3', () => {
+  const previousCid = 'bafyreic6ntajpiaijirww2ghopyqyzccffrjv3h5h6r4nsgljiza7rcuia';
+
+  /** The v2 sample varied — a v3 payload that also uses the v2-only features. */
+  const v3Sample: FeedPermissionPayload = {
+    ...sample,
+    feedType: 'verified-identity',
+    podContainerPath: 'pulse/credentials/identity/',
+    permissions: ['write'],
+    dataCategories: ['identity-document'],
+    dataDescription: 'Verified Identity Credential',
+    previousCid,
+  };
+
+  it('emits v3 when a previous CID is present, even on an otherwise v1-shaped payload', () => {
+    const raw = rawMap(marshalFeedPermission({ ...sample, previousCid }));
+    expect(raw.v).toBe(3);
+    expect(raw.pcid).toBe(previousCid);
+  });
+
+  it('emits v3 when a previous CID joins the v2 features', () => {
+    const raw = rawMap(marshalFeedPermission(v3Sample));
+    expect(raw.v).toBe(3);
+    expect(raw.pcid).toBe(previousCid);
+    expect(raw.dd).toBe(v3Sample.dataDescription);
+  });
+
+  it('omits pcid when the previous CID is unset', () => {
+    expect('pcid' in rawMap(marshalFeedPermission(sample))).toBe(false);
+    expect('pcid' in rawMap(marshalFeedPermission({ ...v3Sample, previousCid: '' }))).toBe(false);
+  });
+
+  it('round-trips a v3 payload', () => {
+    const got = unmarshalFeedPermission(marshalFeedPermission(v3Sample));
+    expect(got.previousCid).toBe(previousCid);
+    expect(got.dataDescription).toBe(v3Sample.dataDescription);
+    expect(got.podContainerPath).toBe(v3Sample.podContainerPath);
+    expect(got.grantorXpub).toBeUndefined();
+  });
+
+  it('round-trips a v3 payload carrying every optional field', () => {
+    const all: FeedPermissionPayload = {
+      ...v3Sample,
+      grantorXpub: 'xpub661MyMwAqRbcGRandomTestXpubValue',
+    };
+    const got = unmarshalFeedPermission(marshalFeedPermission(all));
+    expect(got.grantorXpub).toBe(all.grantorXpub);
+    expect(got.previousCid).toBe(previousCid);
+  });
+
+  /**
+   * "pcid" type discipline and the version rule, mirroring the "dd" suite above:
+   * a non-string value is refused on type grounds at every version, a non-empty
+   * value below v3 is a downgrade, and an empty one is indistinguishable from an
+   * absent key so it is accepted.
+   */
+  describe('pcid type discipline', () => {
+    function forge(pcid: unknown, version: number): Uint8Array {
+      const raw = rawMap(marshalFeedPermission({ ...sample, previousCid }));
+      raw.pcid = pcid;
+      raw.v = version;
+      return encode(raw);
+    }
+
+    const illTyped: Array<[string, unknown]> = [
+      ['int', 7],
+      ['zero', 0],
+      ['bool', true],
+      ['false', false],
+      ['list', ['a']],
+    ];
+
+    for (const [name, pcid] of illTyped) {
+      it(`rejects a non-string previous CID at v3 (${name})`, () => {
+        expect(() => unmarshalFeedPermission(forge(pcid, 3))).toThrow(/pcid/);
+      });
+
+      it(`rejects a non-string previous CID at v1 (${name})`, () => {
+        expect(() => unmarshalFeedPermission(forge(pcid, 1))).toThrow(/pcid/);
+      });
+    }
+
+    it('rejects a non-empty previous CID below v3', () => {
+      expect(() => unmarshalFeedPermission(forge(previousCid, 1))).toThrow(
+        'pcid is not valid in feed-permission version 1',
+      );
+      expect(() => unmarshalFeedPermission(forge(previousCid, 2))).toThrow(
+        'pcid is not valid in feed-permission version 2',
+      );
+    });
+
+    it('accepts an empty-string previous CID below v3', () => {
+      const got = unmarshalFeedPermission(forge('', 1));
+      expect(got.previousCid).toBeUndefined();
     });
   });
 });

@@ -30,15 +30,17 @@ export interface NotaryBlock {
  *
  * Version 1 constrained the pod container path to "pulse/feeds/{feedType}/" and
  * had no data description. Version 2 generalises the container path to any region
- * under "pulse/" and adds the human-readable dataDescription field. Both versions
- * deserialise into the same interface; the marshaller picks the lowest version
- * that can represent the payload, so records produced by v1 callers keep their
- * bytes (and therefore their CIDs) unchanged.
+ * under "pulse/" and adds the human-readable dataDescription field. Version 3
+ * adds previousCid, the link from a regranted permission to the one it
+ * supersedes. All versions deserialise into the same interface; the marshaller
+ * picks the lowest version that can represent the payload, so records produced
+ * by v1 and v2 callers keep their bytes (and therefore their CIDs) unchanged.
  *
- * Mirrors pulse-protocol-go/types/payloads/feedpermission.VersionV1/VersionV2.
+ * Mirrors pulse-protocol-go/types/payloads/feedpermission.VersionV1/V2/V3.
  */
 export const FEED_PERMISSION_VERSION_V1 = 1;
 export const FEED_PERMISSION_VERSION_V2 = 2;
+export const FEED_PERMISSION_VERSION_V3 = 3;
 
 /**
  * Unencrypted payload by which a grantor authorises an inbound data feed to
@@ -87,6 +89,13 @@ export interface FeedPermissionPayload {
    * Added at v2; optional — omitted when empty.
    */
   dataDescription?: string;
+  /**
+   * CID of the feed permission this one supersedes, set when this grant is the
+   * regrant half of a variation (revoke + regrant composite). A private,
+   * backward-pointing link: only a party able to decrypt the record ever sees
+   * it. Added at v3; optional — omitted when empty.
+   */
+  previousCid?: string;
   /** Unix timestamp (seconds) at which this consent was issued. */
   issuedAt: number;
   /** Unix timestamp (seconds) at which this consent expires; 0 = no expiry. */
