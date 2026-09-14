@@ -8,7 +8,9 @@
  * pulse-protocol-go/ipfs/cbor_feedpermission_known_test.go.
  */
 
+import { encode } from '@ipld/dag-cbor';
 import type { FeedPermissionPayload } from '@pulse-protocol/types';
+import { FEED_PERMISSION_VERSION_V1 } from '@pulse-protocol/types';
 import { describe, expect, it } from 'vitest';
 import { marshalFeedPermission, unmarshalFeedPermission } from '../cbor-feedpermission.js';
 import { getCid } from '../cid.js';
@@ -197,5 +199,80 @@ describe('feed-permission v3 known answers', () => {
     const v2 = marshalFeedPermission(knownV2Payload);
     expect(toHex(v2)).toBe(knownV2Hex);
     expect(await getCid(v2)).toBe(knownV2Cid);
+  });
+});
+
+const knownPolicyHashPP = 'bafyreigmlkpf6fpxpupe3u44zypn4ey7tvnjw33mlhyqqv7qc5kpyfj4fq';
+const knownPolicyHashTC = 'bafyreihmfpvga3o7mmryviquqppfuoe6tw75e22xywjgx7rr3njddnjtxq';
+
+const knownV3PolicyHex =
+  'b061746f666565642d7065726d697373696f6e61760362636e182a62646382737472616e73616374696f6e2d686973746f72796f6163636f756e742d62616c616e636562656e4501020304056266746c6f70656e2d62616e6b696e6762706d82647265616465777269746562707682a2626468783b62616679726569676d6c6b70663666707870757065337534347a79706e3465793774766e6a7733336d6c6879717176377163356b7079666a3466716264746e707269766163792d706f6c696379a2626468783b62616679726569686d6670766761336f376d6d72797669717571707066756f6536747737356532327879776a6778377272336e6a64646e6a747871626474747465726d732d616e642d636f6e646974696f6e736363706478196469643a7765623a66656564732e6578616d706c652e636f6d636578701a671db480636961741a6553f100636e6b315821020000000000000000000000000000000000000000000000000000000000000000636e6b32582103000000000000000000000000000000000000000000000000000000000000000063706370781970756c73652f66656564732f6f70656e2d62616e6b696e672f637769646d776c742d63616e6172792d76316467776964782968747470733a2f2f706f642e6578616d706c652f616c6963652f70726f66696c652f63617264236d65';
+const knownV3PolicyCid = 'bafyreieo2aosx4xq4pwewb4aqpmcq2cmr3ow4heueduznvfsa63xhvqqmu';
+
+const knownV3PolicyPayload: FeedPermissionPayload = {
+  ...knownV1Payload,
+  policyVersions: [
+    { docType: 'terms-and-conditions', documentHash: knownPolicyHashTC },
+    { docType: 'privacy-policy', documentHash: knownPolicyHashPP },
+  ],
+};
+
+describe('feed-permission v3 policy-versions known answers', () => {
+  it('marshals the v3+policyVersions canary payload to the exact Go bytes', async () => {
+    const block = marshalFeedPermission(knownV3PolicyPayload);
+    expect(toHex(block)).toBe(knownV3PolicyHex);
+    expect(await getCid(block)).toBe(knownV3PolicyCid);
+  });
+
+  it('decodes the pinned bytes with entries in sorted order', () => {
+    const block = Uint8Array.from(
+      (knownV3PolicyHex.match(/../g) ?? []).map((h) => Number.parseInt(h, 16)),
+    );
+    const got = unmarshalFeedPermission(block);
+    expect(got.policyVersions?.[0]?.docType).toBe('privacy-policy');
+    expect(got.policyVersions?.[1]?.docType).toBe('terms-and-conditions');
+    expect(got.previousCid).toBeUndefined();
+  });
+
+  it('rejects a duplicate docType', () => {
+    const dup = marshalFeedPermission({
+      ...knownV1Payload,
+      policyVersions: [
+        { docType: 'privacy-policy', documentHash: knownPolicyHashPP },
+        { docType: 'privacy-policy', documentHash: knownPolicyHashTC },
+      ],
+    });
+    expect(() => unmarshalFeedPermission(dup)).toThrow(/duplicate/);
+  });
+
+  it('rejects a malformed documentHash', () => {
+    const bad = marshalFeedPermission({
+      ...knownV1Payload,
+      policyVersions: [{ docType: 'privacy-policy', documentHash: 'not-a-cid' }],
+    });
+    expect(() => unmarshalFeedPermission(bad)).toThrow(/well-formed/);
+  });
+
+  it('rejects pv carried by a below-v3 record', () => {
+    // Hand-construct a v1 block with a pv field (normally impossible via the marshaller)
+    const malformed = encode({
+      t: 'feed-permission',
+      v: FEED_PERMISSION_VERSION_V1, // v1, not v3
+      cn: 42,
+      dc: ['category'],
+      en: new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05]),
+      ft: 'feed-type',
+      pm: ['read'],
+      cpd: 'did:web:example.com',
+      exp: 1_730_000_000,
+      iat: 1_700_000_000,
+      nk1: knownNotaryKey1(),
+      nk2: knownNotaryKey2(),
+      pcp: 'pulse/feeds/feed-type/',
+      wid: 'wlt-test',
+      gwid: 'https://pod.example/profile/card#me',
+      pv: [{ dh: knownPolicyHashPP, dt: 'privacy-policy' }], // This should cause rejection
+    });
+    expect(() => unmarshalFeedPermission(malformed)).toThrow(/pv is not valid/i);
   });
 });

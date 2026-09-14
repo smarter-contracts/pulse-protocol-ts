@@ -5,13 +5,14 @@ import {
   FEED_PERMISSION_VERSION_V3,
   type FeedPermissionPayload,
 } from '@pulse-protocol/types';
+import { CID } from 'multiformats/cid';
 
 /**
  * Returns the lowest wire version able to represent the payload.
  *
- * v3 is required when the payload carries a previousCid — the variation link
- * cannot be expressed below v3, so it is checked first and outranks the v2
- * features it may compose with.
+ * v3 is required when the payload carries a previousCid or policyVersions — these
+ * cannot be expressed below v3, so they are checked first and outrank the v2
+ * features they may compose with.
  *
  * v2 is required when the payload uses a v2-only feature: a dataDescription, or a
  * pod container path outside the v1 "pulse/feeds/{feedType}/" shape. Everything
@@ -22,7 +23,9 @@ import {
  * Mirrors pulse-protocol-go/ipfs.feedPermissionWireVersion.
  */
 function feedPermissionWireVersion(p: FeedPermissionPayload): number {
-  if (p.previousCid) return FEED_PERMISSION_VERSION_V3;
+  if (p.previousCid || (p.policyVersions && p.policyVersions.length > 0)) {
+    return FEED_PERMISSION_VERSION_V3;
+  }
   if (p.dataDescription) return FEED_PERMISSION_VERSION_V2;
   if (p.podContainerPath && p.podContainerPath !== `pulse/feeds/${p.feedType}/`) {
     return FEED_PERMISSION_VERSION_V2;
@@ -34,9 +37,9 @@ function feedPermissionWireVersion(p: FeedPermissionPayload): number {
  * Encodes a FeedPermissionPayload as DAG-CBOR.
  *
  * Map with 15 mandatory fields plus the optional "dd" (dataDescription, v2 only),
- * "gx" (grantorXpub) and "pcid" (previousCid, v3 only) fields when non-empty —
- * keys in DAG-CBOR canonical order (length asc, then lexicographic):
- *   t(1), v(1), cn(2), dc(2), dd(2)?, en(2), ft(2), gx(2)?, pm(2),
+ * "gx" (grantorXpub), "pcid" (previousCid, v3 only) and "pv" (policyVersions, v3 only)
+ * fields when non-empty — keys in DAG-CBOR canonical order (length asc, then lexicographic):
+ *   t(1), v(1), cn(2), dc(2), dd(2)?, en(2), ft(2), gx(2)?, pm(2), pv(2)?,
  *   cpd(3), exp(3), iat(3), nk1(3), nk2(3), pcp(3), wid(3), gwid(4), pcid(4)?
  *
  * The object literal below is built in declaration order; @ipld/dag-cbor sorts
@@ -68,6 +71,12 @@ export function marshalFeedPermission(p: FeedPermissionPayload): Uint8Array {
   }
   if (p.grantorXpub) {
     block.gx = p.grantorXpub;
+  }
+  if (version >= FEED_PERMISSION_VERSION_V3 && p.policyVersions && p.policyVersions.length > 0) {
+    const sorted = [...p.policyVersions].sort((a, b) =>
+      a.docType < b.docType ? -1 : a.docType > b.docType ? 1 : 0,
+    );
+    block.pv = sorted.map((v) => ({ dh: v.documentHash, dt: v.docType }));
   }
   if (version >= FEED_PERMISSION_VERSION_V3 && p.previousCid) {
     block.pcid = p.previousCid;
@@ -130,6 +139,34 @@ export function unmarshalFeedPermission(block: Uint8Array): FeedPermissionPayloa
   if (pcid !== '' && version < FEED_PERMISSION_VERSION_V3) {
     throw new Error(`pcid is not valid in feed-permission version ${version}`);
   }
+  // "pv" is optional and v3-only, exactly as "pcid" is above.
+  let pv: { docType: string; documentHash: string }[] | undefined;
+  if (Object.hasOwn(obj, 'pv')) {
+    const raw = obj.pv;
+    if (!Array.isArray(raw)) {
+      throw new Error(`pv: expected array, got ${typeof raw}`);
+    }
+    const seen = new Set<string>();
+    pv = raw.map((entry) => {
+      if (typeof entry !== 'object' || entry === null) {
+        throw new Error('pv: entry is not an object');
+      }
+      const e = entry as Record<string, unknown>;
+      if (typeof e.dh !== 'string') throw new Error(`dh: expected string, got ${typeof e.dh}`);
+      if (typeof e.dt !== 'string') throw new Error(`dt: expected string, got ${typeof e.dt}`);
+      try {
+        CID.parse(e.dh);
+      } catch {
+        throw new Error(`dh: ${e.dh} is not a well-formed CID`);
+      }
+      if (seen.has(e.dt)) throw new Error(`duplicate docType ${e.dt} in pv`);
+      seen.add(e.dt);
+      return { docType: e.dt, documentHash: e.dh };
+    });
+  }
+  if (pv && pv.length > 0 && version < FEED_PERMISSION_VERSION_V3) {
+    throw new Error(`pv is not valid in feed-permission version ${version}`);
+  }
   const payload: FeedPermissionPayload = {
     consentNo: obj.cn as number,
     walletId: obj.wid as string,
@@ -147,6 +184,7 @@ export function unmarshalFeedPermission(block: Uint8Array): FeedPermissionPayloa
   };
   if (dd) payload.dataDescription = dd;
   if (pcid) payload.previousCid = pcid;
+  if (pv && pv.length > 0) payload.policyVersions = pv;
   const gx = obj.gx as string | undefined;
   if (gx) payload.grantorXpub = gx;
   return payload;

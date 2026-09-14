@@ -32,7 +32,8 @@ export interface NotaryBlock {
  * had no data description. Version 2 generalises the container path to any region
  * under "pulse/" and adds the human-readable dataDescription field. Version 3
  * adds previousCid, the link from a regranted permission to the one it
- * supersedes. All versions deserialise into the same interface; the marshaller
+ * supersedes, and policyVersions, the policy/T&C versions in force when consent
+ * was granted. All versions deserialise into the same interface; the marshaller
  * picks the lowest version that can represent the payload, so records produced
  * by v1 and v2 callers keep their bytes (and therefore their CIDs) unchanged.
  *
@@ -41,6 +42,18 @@ export interface NotaryBlock {
 export const FEED_PERMISSION_VERSION_V1 = 1;
 export const FEED_PERMISSION_VERSION_V2 = 2;
 export const FEED_PERMISSION_VERSION_V3 = 3;
+
+/**
+ * Pairs a policy/T&C document type with the content-addressed reference to
+ * the version in force when the payload was constructed. `documentHash` is
+ * the pulse-policy-registry manifest reference (a CIDv1 string) — named
+ * `documentHash` rather than `cid` because the registry persists documents
+ * in Postgres, not IPFS.
+ */
+export interface PolicyVersionRef {
+  docType: string;
+  documentHash: string;
+}
 
 /**
  * Unencrypted payload by which a grantor authorises an inbound data feed to
@@ -112,4 +125,10 @@ export interface FeedPermissionPayload {
    * Optional — omitted when empty.
    */
   grantorXpub?: string;
+  /**
+   * Policy/T&C document versions in force when this consent was granted
+   * (SOW §2.3), one entry per document type. Added at v3 alongside
+   * previousCid; optional — omitted when empty.
+   */
+  policyVersions?: PolicyVersionRef[];
 }
