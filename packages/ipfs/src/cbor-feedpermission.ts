@@ -1,18 +1,25 @@
 import { decode, encode } from '@ipld/dag-cbor';
 import {
+  type Custody,
   FEED_PERMISSION_VERSION_V1,
   FEED_PERMISSION_VERSION_V2,
   FEED_PERMISSION_VERSION_V3,
   type FeedPermissionPayload,
+  isValidCustody,
 } from '@pulse-protocol/types';
 import { CID } from 'multiformats/cid';
 
 /**
  * Returns the lowest wire version able to represent the payload.
  *
- * v3 is required when the payload carries a previousCid or policyVersions — these
- * cannot be expressed below v3, so they are checked first and outrank the v2
- * features they may compose with.
+ * v3 is required when the payload uses any v3-only feature. There is more than
+ * one: previousCid (the variation link), policyVersions (in-force policy/T&C
+ * versions) and custody (the signing-regime mark). They are independent — a v3
+ * payload may carry any combination of them, or none — so each contributes its
+ * own presence check to the same branch, which is therefore a disjunction rather
+ * than a single test. A further v3 feature is added by appending another clause
+ * here, not by bumping the version again. The branch is checked first because a
+ * v3 feature outranks the v2 features it may compose with.
  *
  * v2 is required when the payload uses a v2-only feature: a dataDescription, or a
  * pod container path outside the v1 "pulse/feeds/{feedType}/" shape. Everything
@@ -23,7 +30,7 @@ import { CID } from 'multiformats/cid';
  * Mirrors pulse-protocol-go/ipfs.feedPermissionWireVersion.
  */
 function feedPermissionWireVersion(p: FeedPermissionPayload): number {
-  if (p.previousCid || (p.policyVersions && p.policyVersions.length > 0)) {
+  if (p.previousCid || (p.policyVersions && p.policyVersions.length > 0) || p.custody) {
     return FEED_PERMISSION_VERSION_V3;
   }
   if (p.dataDescription) return FEED_PERMISSION_VERSION_V2;
@@ -36,18 +43,42 @@ function feedPermissionWireVersion(p: FeedPermissionPayload): number {
 /**
  * Encodes a FeedPermissionPayload as DAG-CBOR.
  *
- * Map with 15 mandatory fields plus the optional "dd" (dataDescription, v2 only),
- * "gx" (grantorXpub), "pcid" (previousCid, v3 only) and "pv" (policyVersions, v3 only)
- * fields when non-empty — keys in DAG-CBOR canonical order (length asc, then lexicographic):
- *   t(1), v(1), cn(2), dc(2), dd(2)?, en(2), ft(2), gx(2)?, pm(2), pv(2)?,
+ * Map with 15 mandatory fields plus the optional "cu" (custody, v3 only), "dd"
+ * (dataDescription, v2 only), "gx" (grantorXpub), "pcid" (previousCid, v3 only)
+ * and "pv" (policyVersions, v3 only) fields when set — keys in DAG-CBOR
+ * canonical order (length asc, then lexicographic):
+ *   t(1), v(1), cn(2), cu(2)?, dc(2), dd(2)?, en(2), ft(2), gx(2)?, pm(2), pv(2)?,
  *   cpd(3), exp(3), iat(3), nk1(3), nk2(3), pcp(3), wid(3), gwid(4), pcid(4)?
  *
  * The object literal below is built in declaration order; @ipld/dag-cbor sorts
  * the keys canonically on encode, so only the list above records the wire order.
  *
+ * An explicit but unrecognised custody value is refused rather than encoded.
+ * Emitting one would mint a record that no conforming decoder will accept — and
+ * which is nonetheless CID-bound and signed — so the failure belongs here, at the
+ * point the mistake is made, not at the reader that inherits it.
+ *
  * Mirrors pulse-protocol-go/ipfs.MarshalFeedPermission.
  */
 export function marshalFeedPermission(p: FeedPermissionPayload): Uint8Array {
+  // Only `undefined` means "leave this record unmarked". Anything else present
+  // on the field must be a recognised value — `null` and `''` included, which a
+  // laxer check would quietly encode as unmarked rather than reporting the
+  // caller's mistake.
+  //
+  // DELIBERATE ASYMMETRY WITH GO. Go's MarshalFeedPermission treats
+  // `Custody: ""` as unmarked, because in Go the empty string IS the zero value
+  // of the field and there is no way to tell "never set" from "set to empty" —
+  // the same reason `dd` and `pcid` behave that way there. TypeScript can tell
+  // the two apart, so it does, and rejects the empty string as the caller bug it
+  // almost certainly is (`custody: someString` where someString came back
+  // empty). Rejecting is the fail-closed choice, and it costs nothing in
+  // compatibility: no VALID input encodes differently in the two languages, so
+  // the byte-identical guarantee is untouched. This is a difference in how
+  // sloppy input is reported, not in what correct input produces.
+  if (p.custody !== undefined && !isValidCustody(p.custody)) {
+    throw new Error(`cu: unrecognised custody value ${JSON.stringify(p.custody)}`);
+  }
   const version = feedPermissionWireVersion(p);
   const block: Record<string, unknown> = {
     t: 'feed-permission',
@@ -66,6 +97,9 @@ export function marshalFeedPermission(p: FeedPermissionPayload): Uint8Array {
     wid: p.walletId,
     gwid: p.grantorWebId,
   };
+  if (version >= FEED_PERMISSION_VERSION_V3 && p.custody) {
+    block.cu = p.custody;
+  }
   if (version >= FEED_PERMISSION_VERSION_V2 && p.dataDescription) {
     block.dd = p.dataDescription;
   }
@@ -167,6 +201,35 @@ export function unmarshalFeedPermission(block: Uint8Array): FeedPermissionPayloa
   if (pv && pv.length > 0 && version < FEED_PERMISSION_VERSION_V3) {
     throw new Error(`pv is not valid in feed-permission version ${version}`);
   }
+  // "cu" is optional and v3-only, and carries a second rule the other optional
+  // fields do not: its value is a closed enum.
+  //
+  // Absence and an unrecognised value are deliberately treated differently.
+  // Absence is legitimate — a legacy or pre-VRS record that predates custody
+  // marking — and reads as undefined, never as CUSTODY_HOLDER. An explicit value
+  // outside the enum is malformed or tampered input, and is refused: this payload
+  // is CID-bound and signed, so a reader that quietly accepted an unknown mark
+  // would be attributing a custody regime it cannot name to a record it has
+  // already treated as authentic.
+  //
+  // The type check cannot be skipped in favour of the enum check alone — a
+  // non-string "cu" must be reported as the malformed field it is, and at every
+  // version, exactly as "dd" and "pcid" are above.
+  let cu: Custody | undefined;
+  if (Object.hasOwn(obj, 'cu')) {
+    if (typeof obj.cu !== 'string') {
+      throw new Error(`cu: expected string, got ${obj.cu === null ? 'null' : typeof obj.cu}`);
+    }
+    if (obj.cu !== '') {
+      if (version < FEED_PERMISSION_VERSION_V3) {
+        throw new Error(`cu is not valid in feed-permission version ${version}`);
+      }
+      if (!isValidCustody(obj.cu)) {
+        throw new Error(`cu: unrecognised custody value ${JSON.stringify(obj.cu)}`);
+      }
+      cu = obj.cu;
+    }
+  }
   const payload: FeedPermissionPayload = {
     consentNo: obj.cn as number,
     walletId: obj.wid as string,
@@ -185,6 +248,7 @@ export function unmarshalFeedPermission(block: Uint8Array): FeedPermissionPayloa
   if (dd) payload.dataDescription = dd;
   if (pcid) payload.previousCid = pcid;
   if (pv && pv.length > 0) payload.policyVersions = pv;
+  if (cu) payload.custody = cu;
   const gx = obj.gx as string | undefined;
   if (gx) payload.grantorXpub = gx;
   return payload;

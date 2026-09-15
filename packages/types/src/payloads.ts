@@ -56,6 +56,61 @@ export interface PolicyVersionRef {
 }
 
 /**
+ * Wire versions of the feed-revocation payload.
+ *
+ * Version 1 was the only version for the whole of this payload's history: a
+ * fixed eight-entry map with no optional fields. Version 2 adds the custody
+ * mark. As with feed-permission, the marshaller picks the lowest version able to
+ * represent the payload, so an unmarked revocation keeps its original bytes and
+ * therefore its CID.
+ *
+ * Mirrors pulse-protocol-go/types/payloads/feedrevocation.VersionV1/V2.
+ */
+export const FEED_REVOCATION_VERSION_V1 = 1;
+export const FEED_REVOCATION_VERSION_V2 = 2;
+
+/**
+ * Which signing regime produced a consent record.
+ *
+ * The mark travels inside the DAG-CBOR payload, so it is covered by the record's
+ * CID and by the EIP-191 signature over that CID: it is immutable once signed. It
+ * is also inside the encrypted envelope, so only a party holding the record key
+ * can read it — not an arbitrary third party resolving the CID.
+ *
+ * The mark is operator-asserted: the same wallet key signs in both regimes, so
+ * the signature alone cannot prove which regime produced a record. What makes it
+ * meaningful is the escrow plane's independent audit trail, which an
+ * escrow-signed record falsely marked "holder" would contradict. See the VRS
+ * escrow-custody design, Decision 4.
+ *
+ * Mirrors pulse-protocol-go/types/payloads.CustodyEscrow/CustodyHolder.
+ */
+export const CUSTODY_ESCROW = 'escrow';
+export const CUSTODY_HOLDER = 'holder';
+
+/**
+ * The custody enum. Deliberately extensible: a future client-held-key mode is
+ * added as a new member without any structural change to the payloads.
+ */
+export type Custody = typeof CUSTODY_ESCROW | typeof CUSTODY_HOLDER;
+
+/**
+ * Whether `s` is a recognised custody value.
+ *
+ * `undefined` and the empty string are deliberately NOT valid. Absence of the
+ * mark is a distinct third state — "unmarked" — meaning a legacy or pre-VRS
+ * record that predates custody marking, and it must never be read as
+ * CUSTODY_HOLDER. Callers decoding untrusted bytes use this to reject an
+ * explicit but unrecognised value, which is malformed or tampered input rather
+ * than a legacy record.
+ *
+ * Mirrors pulse-protocol-go/types/payloads.ValidCustody.
+ */
+export function isValidCustody(s: unknown): s is Custody {
+  return s === CUSTODY_ESCROW || s === CUSTODY_HOLDER;
+}
+
+/**
  * Unencrypted payload by which a grantor authorises an inbound data feed to
  * write into their own Solid pod.
  *
@@ -109,6 +164,21 @@ export interface FeedPermissionPayload {
    * it. Added at v3; optional — omitted when empty.
    */
   previousCid?: string;
+  /**
+   * Which signing regime produced this consent. Added at v3.
+   *
+   * Optional AT THE CODEC: an unset value is omitted from the wire, and a record
+   * without the key decodes back to `undefined`. That state is "unmarked" — a
+   * legacy or pre-VRS record — and must never be read as CUSTODY_HOLDER. The VRS
+   * profile's requirement that producers always set an explicit value is a
+   * product-policy constraint enforced at the signing call site, not something
+   * this shared library imposes on every caller: a non-VRS grant has no
+   * escrow/holder distinction to record.
+   *
+   * An explicit but unrecognised value is rejected by both marshalFeedPermission
+   * and unmarshalFeedPermission.
+   */
+  custody?: Custody;
   /** Unix timestamp (seconds) at which this consent was issued. */
   issuedAt: number;
   /** Unix timestamp (seconds) at which this consent expires; 0 = no expiry. */
@@ -128,7 +198,7 @@ export interface FeedPermissionPayload {
   /**
    * Policy/T&C document versions in force when this consent was granted
    * (SOW §2.3), one entry per document type. Added at v3 alongside
-   * previousCid; optional — omitted when empty.
+   * previousCid and custody; optional — omitted when empty.
    */
   policyVersions?: PolicyVersionRef[];
 }
