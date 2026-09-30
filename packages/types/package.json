@@ -13,7 +13,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --out-dir dist",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
@@ -22,6 +22,7 @@
     "access": "public"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.11",
     "tsup": "^8.0.0",
     "vitest": "^4.1.11"
   }

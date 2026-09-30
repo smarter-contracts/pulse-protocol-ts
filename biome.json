@@ -1,7 +1,14 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.4.10/schema.json",
   "files": {
-    "includes": ["**/*.ts", "**/*.json", "!**/dist", "!**/node_modules", "!**/.turbo"]
+    "includes": [
+      "**/*.ts",
+      "**/*.json",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/.turbo",
+      "!**/coverage"
+    ]
   },
   "linter": {
     "enabled": true,
