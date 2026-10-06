@@ -362,8 +362,14 @@ export function decodeV2Slot(blob: Uint8Array): DecodedV2Slot | null {
  * MIN_ARGON_M..MAX_ARGON_P block for why this must happen before any derivation:
  * the parameters are attacker-controllable until the AEAD tag has been checked,
  * and the tag cannot be checked without first deriving the key.
+ *
+ * Exported so a caller that schedules the derivation somewhere else — off the
+ * event loop, on another thread, in another process — can apply exactly this
+ * check before it commits the resources, rather than reimplementing the bounds
+ * and drifting from them. It is the same function the encoder and decoder use;
+ * there is deliberately no second copy of these limits anywhere.
  */
-function validateArgonParams({ m, t, p }: ArgonParams): void {
+export function validateArgonParams({ m, t, p }: ArgonParams): void {
   // Decoded parameters are always integers; this rejects NaN and fractional
   // values from a JavaScript caller, which Go's uint32 typing rules out.
   if (!Number.isInteger(m) || !Number.isInteger(t) || !Number.isInteger(p)) {
@@ -708,6 +714,64 @@ export function decodeEscrowParams(blob: Uint8Array): EscrowParams {
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
 /**
+ * Everything an unwrap needs except the slot key itself.
+ *
+ * The blob has been decoded, its parameters bounded and its AEAD inputs pinned;
+ * all that remains is to derive the slot key from the named inputs and hand it
+ * to `open`. Splitting the work here is what lets the derivation — and only the
+ * derivation — be moved somewhere else (see unwrapKeyslotAsync) without any of
+ * the byte-level decisions moving with it.
+ */
+type UnwrapPlan =
+  | {
+      kind: 'password';
+      sub: string;
+      iss: string;
+      walletId: string;
+      secret: Uint8Array;
+      salt: Uint8Array;
+      params: ArgonParams;
+      open(slotKey: Uint8Array): Uint8Array;
+    }
+  | {
+      kind: 'legacy';
+      sub: string;
+      iss: string;
+      deviceSecret: Uint8Array;
+      salt: Uint8Array;
+      params: ArgonParams;
+      open(slotKey: Uint8Array): Uint8Array;
+    };
+
+/**
+ * How an asynchronous caller derives a slot key.
+ *
+ * The two members mirror `deriveSlotKeyPassword` and `deriveMethodKeyLegacy`
+ * exactly — same arguments, same order — so the obvious implementation is to
+ * forward to them, and a server implementation forwards to them on a worker
+ * thread. They MUST return what those functions return, byte for byte: nothing
+ * downstream re-checks it, and a slot key that differs by one byte is simply an
+ * authentication-tag failure with no diagnosis.
+ */
+export interface AsyncSlotKeyDeriver {
+  password(
+    sub: string,
+    iss: string,
+    walletId: string,
+    secret: Uint8Array,
+    salt: Uint8Array,
+    params: ArgonParams,
+  ): Promise<Uint8Array>;
+  legacy(
+    sub: string,
+    iss: string,
+    deviceSecret: Uint8Array,
+    salt: Uint8Array,
+    params: ArgonParams,
+  ): Promise<Uint8Array>;
+}
+
+/**
  * Recover Kw from a keyslot blob, dispatching on the encoding.
  *
  * A blob whose first byte is 0xB0 is *attempted* as v2 first. Crucially, if the
@@ -727,55 +791,144 @@ export function unwrapKeyslot(
   let v2Error: unknown;
   if (blob.length > 0 && blob[0] === KEYSLOT_MAGIC) {
     try {
-      return tryUnwrapV2(blob, methods.password);
+      return runPlan(planV2(blob, methods.password));
     } catch (err) {
       v2Error = err; // fall through to the legacy attempt
     }
   }
 
   try {
-    return unwrapLegacy(blob, methods.legacy);
+    return runPlan(planLegacy(blob, methods.legacy));
   } catch (legacyError) {
-    if (v2Error !== undefined) {
-      throw new Error(
-        `keyslot unwrap failed (v2: ${errMsg(v2Error)}; legacy: ${errMsg(legacyError)})`,
-      );
-    }
-    throw legacyError;
+    throw combineUnwrapErrors(v2Error, legacyError);
   }
+}
+
+/**
+ * `unwrapKeyslot` with the slot-key derivation delegated to the caller.
+ *
+ * Argon2id is memory-hard on purpose, so on a server the synchronous form stops
+ * the event loop for its whole duration and the process answers nothing
+ * meanwhile — including its own health check (mid-tier #1167). This entry point
+ * exists so a caller can run the derivation on a worker thread while every
+ * byte-level decision — the dispatch, the parameter bounds, the reconstructed
+ * AAD, the AEAD open, the legacy fallback and the combined error — stays here,
+ * shared with the synchronous form through the same plan.
+ *
+ * It is an addition, not a replacement: `unwrapKeyslot` is unchanged, and the
+ * two are asserted to agree across the whole dispatch matrix in
+ * __tests__/keyslot-async.test.ts. The output is the synchronous output; there
+ * is no separate asynchronous behaviour to get wrong.
+ */
+export async function unwrapKeyslotAsync(
+  blob: Uint8Array,
+  methods: { password?: PasswordUnlock; legacy?: LegacyUnlock },
+  derive: AsyncSlotKeyDeriver,
+): Promise<Uint8Array> {
+  let v2Error: unknown;
+  if (blob.length > 0 && blob[0] === KEYSLOT_MAGIC) {
+    try {
+      return await runPlanAsync(planV2(blob, methods.password), derive);
+    } catch (err) {
+      v2Error = err; // fall through to the legacy attempt
+    }
+  }
+
+  try {
+    return await runPlanAsync(planLegacy(blob, methods.legacy), derive);
+  } catch (legacyError) {
+    throw combineUnwrapErrors(v2Error, legacyError);
+  }
+}
+
+/**
+ * Surface a failed unwrap.
+ *
+ * When the v2 attempt also failed its message is carried alongside the legacy
+ * one: a caller looking at "escrow keyslot must be opened via the escrow plane;
+ * legacy: ..." can tell a recognised-but-unopenable slot from an unrecognised
+ * blob, which the legacy message alone would not say.
+ */
+function combineUnwrapErrors(v2Error: unknown, legacyError: unknown): Error {
+  if (v2Error !== undefined) {
+    return new Error(
+      `keyslot unwrap failed (v2: ${errMsg(v2Error)}; legacy: ${errMsg(legacyError)})`,
+    );
+  }
+  return legacyError instanceof Error ? legacyError : new Error(String(legacyError));
 }
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Decode and unwrap a blob via the v2 path, reconstructing the header AAD. */
-function tryUnwrapV2(blob: Uint8Array, password?: PasswordUnlock): Uint8Array {
+/** Derive this plan's slot key on the calling thread and open the blob. */
+function runPlan(plan: UnwrapPlan): Uint8Array {
+  const slotKey =
+    plan.kind === 'password'
+      ? deriveSlotKeyPassword(
+          plan.sub,
+          plan.iss,
+          plan.walletId,
+          plan.secret,
+          plan.salt,
+          plan.params,
+        )
+      : deriveMethodKeyLegacy(plan.sub, plan.iss, plan.deviceSecret, plan.salt, plan.params);
+  return plan.open(slotKey);
+}
+
+/** Derive this plan's slot key through the caller's deriver and open the blob. */
+async function runPlanAsync(plan: UnwrapPlan, derive: AsyncSlotKeyDeriver): Promise<Uint8Array> {
+  const slotKey =
+    plan.kind === 'password'
+      ? await derive.password(
+          plan.sub,
+          plan.iss,
+          plan.walletId,
+          plan.secret,
+          plan.salt,
+          plan.params,
+        )
+      : await derive.legacy(plan.sub, plan.iss, plan.deviceSecret, plan.salt, plan.params);
+  return plan.open(slotKey);
+}
+
+/** Decode a blob via the v2 path, reconstructing the header AAD. */
+function planV2(blob: Uint8Array, password?: PasswordUnlock): UnwrapPlan {
   const decoded = decodeV2Slot(blob);
   if (!decoded) {
     throw new Error('not a v2 keyslot blob');
   }
   // The header (AAD) is everything before the nonce: 5 header bytes + params.
   const aad = blob.subarray(0, 5 + decoded.params.length);
-  return unwrapV2(decoded, aad, password);
+  return planV2Slot(decoded, aad, password);
 }
 
-function unwrapV2(decoded: DecodedV2Slot, aad: Uint8Array, password?: PasswordUnlock): Uint8Array {
+function planV2Slot(
+  decoded: DecodedV2Slot,
+  aad: Uint8Array,
+  password?: PasswordUnlock,
+): UnwrapPlan {
   switch (decoded.slotType) {
     case SLOT_TYPE_PASSWORD: {
       if (!password) {
         throw new Error('no matching unlock method supplied for keyslot');
       }
+      // Bounds the Argon2id parameters, and does so HERE — before any plan is
+      // returned and therefore before any derivation is scheduled, on this
+      // thread or another.
       const { salt, argon } = decodePasswordParams(decoded.params);
-      const slotKey = deriveSlotKeyPassword(
-        password.sub,
-        password.iss,
-        password.walletId,
-        password.secret,
+      return {
+        kind: 'password',
+        sub: password.sub,
+        iss: password.iss,
+        walletId: password.walletId,
+        secret: password.secret,
         salt,
-        argon,
-      );
-      return gcm(slotKey, decoded.nonce, aad).decrypt(decoded.ct);
+        params: argon,
+        open: (slotKey) => gcm(slotKey, decoded.nonce, aad).decrypt(decoded.ct),
+      };
     }
     case SLOT_TYPE_ORACLE:
       // Oracle slots carry no local secret; the slot key lives only in the
@@ -798,7 +951,7 @@ function unwrapV2(decoded: DecodedV2Slot, aad: Uint8Array, password?: PasswordUn
   }
 }
 
-function unwrapLegacy(blob: Uint8Array, legacy?: LegacyUnlock): Uint8Array {
+function planLegacy(blob: Uint8Array, legacy?: LegacyUnlock): UnwrapPlan {
   if (!legacy) {
     throw new Error('no matching unlock method supplied for keyslot');
   }
@@ -808,14 +961,15 @@ function unwrapLegacy(blob: Uint8Array, legacy?: LegacyUnlock): Uint8Array {
   const salt = blob.subarray(0, SALT_SIZE);
   const nonce = blob.subarray(SALT_SIZE, SALT_SIZE + NONCE_SIZE);
   const ct = blob.subarray(SALT_SIZE + NONCE_SIZE);
-  const slotKey = deriveMethodKeyLegacy(
-    legacy.sub,
-    legacy.iss,
-    legacy.deviceSecret,
+  return {
+    kind: 'legacy',
+    sub: legacy.sub,
+    iss: legacy.iss,
+    deviceSecret: legacy.deviceSecret,
     salt,
-    legacy.params,
-  );
-  return gcm(slotKey, nonce).decrypt(ct);
+    params: legacy.params,
+    open: (slotKey) => gcm(slotKey, nonce).decrypt(ct),
+  };
 }
 
 // Export sizes for callers/tests.
