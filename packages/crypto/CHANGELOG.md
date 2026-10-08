@@ -4,6 +4,13 @@
 
 ### Added
 
+- `computeMethodHash(sub, iss)` — the canonical keyslot locator, lowercase-hex
+  Keccak-256(utf8(sub) || utf8(iss)), previously re-implemented locally in pulse-user-proxy
+  (#1327). Exported from the package index and the `@pulse-protocol/crypto/keyslot` subpath.
+  Byte-identical to `MethodHash` in `pulse-protocol-go/crypto`, with mirrored
+  known-answer vectors. The plain concatenation is deliberate: `computeMethodHash('ab', 'c') ===
+  computeMethodHash('a', 'bc')`, matching every keyslot already on a pod.
+
 - Escrow (type-5) keyslot — `SLOT_TYPE_ESCROW`, `encodeV2EscrowSlot`, `decodeEscrowParams` and
   the `EscrowParams` type (an alias of `OracleParams`, as the two slot types share one params
   encoding). An escrow slot lets a wallet be opened while its registrant is absent, under the

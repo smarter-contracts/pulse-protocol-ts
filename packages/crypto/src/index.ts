@@ -4,6 +4,7 @@ export * from './hdwallet.js';
 export * from './hkdf.js';
 export * from './key-encapsulate.js';
 export * from './key-exchange.js';
+// keyslot.js also re-exports computeMethodHash from method-hash.js.
 export * from './keyslot.js';
 export * from './signing.js';
 export * from './symmetric.js';

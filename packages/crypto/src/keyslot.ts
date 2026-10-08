@@ -46,6 +46,11 @@ import { gcm } from '@noble/ciphers/aes';
 import { argon2id } from '@noble/hashes/argon2';
 import { randomBytes } from '@noble/hashes/utils';
 
+// The keyslot locator (legacy `{methodHash}.enc` filename and the v2 manifest's
+// `methodHash`) is also published on this subpath so that keyslot consumers can
+// reach it without loading the root entry. It is defined once, in method-hash.ts.
+export { computeMethodHash } from './method-hash.js';
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 /** Leading byte of a v2 keyslot blob. */
