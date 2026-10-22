@@ -37,6 +37,6 @@
   "devDependencies": {
     "@pulse-protocol/ipfs": "workspace:*",
     "tsup": "^8.0.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }
