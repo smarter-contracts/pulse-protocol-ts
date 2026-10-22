@@ -24,7 +24,7 @@
     "@pulse-protocol/types": "workspace:*"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "tsup": "^8.0.0",
     "vitest": "^4.1.12"
   }
